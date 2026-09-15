@@ -1,5 +1,7 @@
 import {test,expect} from '@playwright/test';
 import {legacyInitial} from './legacy-fixture.mjs';
+import {initial} from '../src/model.mjs';
+import {readFileSync,writeFileSync} from 'node:fs';
 const canvas=page=>page.locator('#resume');
 const block=page=>canvas(page).locator('[data-block]').nth(1);
 const state=page=>page.evaluate(()=>JSON.parse(localStorage.getItem('folio-resume-v2')));
@@ -26,6 +28,34 @@ test('direct editing keeps the caret, syncs sidebar, survives reload, and suppor
  await page.getByRole('button',{name:'Undo',exact:true}).click();await expect(name).toHaveText('Jordan Davis');await page.getByRole('button',{name:'Redo',exact:true}).click();await expect(name).toHaveText('Alex Rivera Smith');
  await page.reload();await expect(name).toHaveText('Alex Rivera Smith');
  const title=block(page).getByRole('textbox',{name:'Block title',exact:true});await title.fill('Senior Software Engineer');await title.press('Enter');await expect(title).toHaveText('Senior Software Engineer');expect((await state(page)).sections[1].blocks[0].title).toBe('Senior Software Engineer');
+});
+
+test('clicking blank preview space clears the selected section and block',async({page})=>{
+ await selectBlock(page);
+ await expect(block(page)).toHaveClass(/selected/);
+ await page.locator('#preview-scroll').click({position:{x:8,y:8}});
+ await expect(canvas(page).locator('.resume-block.selected')).toHaveCount(0);
+ await expect(canvas(page).locator('.section-selected')).toHaveCount(0);
+ await expect(page.locator('.inspector')).toHaveCount(0);
+ await selectBlock(page);
+ await page.getByRole('button',{name:'Zoom in'}).click();
+ await expect(canvas(page).locator('.resume-block.selected')).toHaveCount(0);
+});
+
+test('PDF view shows clean sheets and can return to editing',async({page})=>{
+ await selectBlock(page);
+ const count=await canvas(page).locator('.resume-page').count();
+ await page.getByRole('button',{name:'PDF view'}).click();
+ await expect(page.locator('#preview-mode')).toHaveText('PDF PREVIEW');
+ await expect(page.getByRole('button',{name:'Edit view'})).toHaveAttribute('aria-pressed','true');
+ await expect(block(page).locator('.block-toolbar')).toBeHidden();
+ await expect(canvas(page).locator('.column-add').first()).toBeHidden();
+ await expect(canvas(page).locator('.resume-block.selected')).toHaveCount(0);
+ expect(await canvas(page).locator('.resume-page').count()).toBe(count);
+ await page.getByRole('button',{name:'Edit view'}).click();
+ await expect(page.locator('#preview-mode')).toHaveText('EDITABLE CANVAS');
+ await selectBlock(page);
+ await expect(block(page).locator('.block-toolbar')).toBeVisible();
 });
 
 test('bullet Enter splits at the caret and Backspace removes an empty bullet',async({page})=>{
@@ -81,7 +111,7 @@ test('empty sections accept blocks through the accessible move control',async({p
 
 test('global styles inherit, individual overrides win, and reset restores inheritance',async({page})=>{
  await openDesign(page);await page.getByRole('button',{name:/Engineering style/}).click();await page.getByLabel('Typography',{exact:true}).selectOption('verdana');await page.getByLabel('Bullet style',{exact:true}).selectOption('decimal');
- await expect(canvas(page)).toHaveClass(/headings-line/);await expect(canvas(page)).toHaveClass(/font-verdana/);await expect(block(page).locator('.block-bullets')).toHaveCSS('list-style-type','decimal');await expect(block(page).locator('.entry-subtitle')).toHaveCSS('color','rgb(255, 119, 0)');
+ await expect(canvas(page).locator('.resume-page').first()).toHaveClass(/headings-line/);await expect(canvas(page).locator('.resume-page').first()).toHaveClass(/font-verdana/);await expect(block(page).locator('.block-bullets')).toHaveCSS('list-style-type','decimal');await expect(block(page).locator('.entry-subtitle')).toHaveCSS('color','rgb(255, 119, 0)');
  await selectBlock(page);await page.getByLabel('Bullet style',{exact:true}).selectOption('check');await expect(block(page).locator('.block-bullets li').first()).toHaveCSS('--bullet-custom','\'✓  \'');
  await setColor(page,'Title color','#263d66');await expect(block(page).locator('.block-title')).toHaveCSS('color','rgb(38, 61, 102)');await page.locator('[data-reset$=".titleColor"]').click();await expect(block(page).locator('.block-title')).toHaveCSS('color','rgb(153, 0, 0)');
 });
@@ -102,6 +132,62 @@ test('print hides editing controls, outlines and empty placeholders',async({page
  const pdf=await page.pdf({preferCSSPageSize:true,printBackground:true});expect(pdf.byteLength).toBeGreaterThan(10000);
 });
 
+test('long resumes show separate printable pages with all bullet content',async({page})=>{
+ const fixture=process.env.RESUME_FIXTURE;
+ const resume=fixture?JSON.parse(readFileSync(fixture,'utf8')):structuredClone(initial);
+ if(!fixture){resume.sections[1].blocks[0].bullets=Array.from({length:90},(_,i)=>`Achievement ${i+1}: designed and delivered reliable software for teams and customers across multiple products.`);}
+ await page.evaluate(data=>localStorage.setItem('folio-resume-v2',JSON.stringify(data)),resume);
+ await page.reload();
+ const pages=canvas(page).locator('.resume-page');
+ const count=await pages.count();
+ expect(count).toBeGreaterThan(1);
+ await expect(page.locator('#page-count')).toHaveText(`${count} pages`);
+ const actual=await canvas(page).locator('.bullet-text').allTextContents();
+ const expected=resume.sections.flatMap(s=>s.blocks.flatMap(b=>b.bullets));
+ expect(actual.filter(Boolean).sort()).toEqual(expected.filter(Boolean).sort());
+ const overflows=await pages.evaluateAll(list=>list.flatMap((sheet,index)=>{
+   const bottom=sheet.getBoundingClientRect().bottom;
+   return [...sheet.querySelectorAll('.resume-block,.section-heading-row')]
+     .filter(el=>el.getBoundingClientRect().bottom>bottom-10)
+     .map(el=>({page:index+1,text:el.textContent.slice(0,70),by:Math.round(el.getBoundingClientRect().bottom-bottom)}));
+ }));
+ expect(overflows).toEqual([]);
+ await page.emulateMedia({media:'print'});
+ const pdf=await page.pdf({preferCSSPageSize:true,printBackground:true});
+ const pdfPages=[...pdf.toString('latin1').matchAll(/\/Type\s*\/Page\b/g)].length;
+ expect(pdfPages).toBe(count);
+ if(process.env.PDF_OUTPUT)writeFileSync(process.env.PDF_OUTPUT,pdf);
+ if(fixture)console.log(`Fixture preview/PDF pages: ${count}/${pdfPages}`);
+});
+
+test('an oversized paragraph continues on later sheets without losing text',async({page})=>{
+ const resume=structuredClone(initial),target=resume.sections[1].blocks[0];
+ target.bullets=[];
+ target.paragraph=Array.from({length:110},(_,i)=>`Paragraph ${i+1} explains how a product improved reliability for its customers and made work easier for the engineering team. `).join('');
+ await page.evaluate(data=>localStorage.setItem('folio-resume-v2',JSON.stringify(data)),resume);
+ await page.reload();
+ const fragments=canvas(page).locator(`[data-block="${target.id}"] .block-paragraph`);
+ expect(await fragments.count()).toBeGreaterThan(1);
+ expect((await fragments.allTextContents()).join('')).toBe(target.paragraph);
+ const overflows=await canvas(page).locator('.resume-page').evaluateAll(list=>list.flatMap((sheet,index)=>[...sheet.querySelectorAll('.resume-block')].filter(el=>el.getBoundingClientRect().bottom>sheet.getBoundingClientRect().bottom-10).map(()=>index+1)));
+ expect(overflows).toEqual([]);
+ await fragments.last().click();
+ await expect(page.locator('.inspector textarea[data-path$=".paragraph"]')).toHaveValue(target.paragraph);
+});
+
+test('one oversized bullet continues without clipping or losing text',async({page})=>{
+ const resume=structuredClone(initial),target=resume.sections[1].blocks[0];
+ target.paragraph='';
+ target.bullets=[Array.from({length:100},(_,i)=>`Impact ${i+1} improved reliability and delivery for the product team and its customers. `).join('')];
+ await page.evaluate(data=>localStorage.setItem('folio-resume-v2',JSON.stringify(data)),resume);
+ await page.reload();
+ const fragments=canvas(page).locator(`[data-block="${target.id}"] .bullet-text`);
+ expect(await fragments.count()).toBeGreaterThan(1);
+ expect((await fragments.allTextContents()).join('')).toBe(target.bullets[0]);
+ const overflows=await canvas(page).locator('.resume-page').evaluateAll(list=>list.flatMap((sheet,index)=>[...sheet.querySelectorAll('.resume-block')].filter(el=>el.getBoundingClientRect().bottom>sheet.getBoundingClientRect().bottom-10).map(()=>index+1)));
+ expect(overflows).toEqual([]);
+});
+
 test('desktop canvas visual regression',async({page})=>{await page.mouse.move(0,0);await expect(page).toHaveScreenshot('desktop-canvas.png');});
 test('selected engineering block visual regression',async({page})=>{await openDesign(page);await page.getByRole('button',{name:/Engineering style/}).click();await selectBlock(page);await page.mouse.move(0,0);await expect(page).toHaveScreenshot('engineering-block.png');});
 test('mobile editor has no horizontal page overflow and matches its baseline',async({page})=>{await page.setViewportSize({width:390,height:844});await page.mouse.move(0,0);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);await expect(page).toHaveScreenshot('mobile-editor.png',{fullPage:true});});
@@ -119,8 +205,8 @@ test('portrait upload is local, survives reload and backup, and stays available 
  const download=await downloadPromise,stream=await download.createReadStream();let text='';for await(const chunk of stream)text+=chunk;
  expect(JSON.parse(text).photo).toBe((await state(page)).photo);
  await openDesign(page);await page.locator('[data-template="classic"]').click();await expect(photo).toHaveCount(0);expect((await state(page)).photo).toMatch(/^data:image\/jpeg;base64,/);
- await page.locator('[data-template="modern"]').click();await expect(photo).toBeVisible();await expect(photo).toHaveCSS('border-radius','48px');
- await page.locator('.panel-tabs [data-tab="content"]').click();await page.getByLabel('Photo shape',{exact:true}).selectOption('square');await page.getByLabel('Photo framing',{exact:true}).selectOption('top');
+ await page.locator('[data-template="modern"]').click();await expect(photo).toBeVisible();await expect(photo).toHaveCSS('border-radius','50%');
+ await page.locator('.panel-tabs [data-tab="content"]').click();await page.locator('[data-select-section="personal"]').click();await expect(page.getByLabel('Photo framing',{exact:true})).toBeVisible();await page.getByLabel('Photo shape',{exact:true}).selectOption('square');await page.getByLabel('Photo framing',{exact:true}).selectOption('top');
  await expect(photo).toHaveCSS('border-radius','0px');expect((await state(page)).design.photoPosition).toBe('top');
 });
 

@@ -13,3 +13,22 @@
 /* Portrait photos are embedded in the local document and printed with it. */
 .photo-editor{border-top:1px solid #e4ebdf;margin-top:20px;padding-top:18px}.photo-editor-heading{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:13px}.photo-editor-heading strong{font-size:11px;font-weight:600}.photo-editor-heading small{font-size:9px;color:#91a086}.photo-editor-row{display:flex;align-items:center;gap:14px;margin-bottom:10px}.photo-editor-row img,.photo-editor-placeholder{width:68px;height:68px;flex-shrink:0;border-radius:9px;object-fit:cover;border:1px solid #dae5d6;background:#f1f6ed}.photo-editor-placeholder{display:grid;place-items:center;color:#98ab91;font-size:30px}.photo-editor-row>div:last-child{display:flex;align-items:flex-start;flex-direction:column;gap:7px}.photo-editor-row .button{font-size:10px;min-height:32px;padding:7px 11px}.photo-editor>p,.template-photo-note{font-size:9px;line-height:1.6;color:#909c87;margin:0 0 15px}.photo-editor .range-field{margin:0 0 8px}.template-photo-note{margin:10px 0 20px}.resume-photo-wrap{position:absolute;right:0;top:0;width:var(--photo-size);height:var(--photo-size);z-index:1}.resume-photo{width:100%;height:100%;display:block;object-fit:cover;object-position:var(--photo-position);border:2px solid color-mix(in srgb,var(--accent) 18%,white);box-shadow:0 2px 7px #23423518}.editorial .photo-shape-auto .resume-photo{border-radius:9px}.modern .photo-shape-auto .resume-photo,.photo-shape-circle .resume-photo{border-radius:50%}.photo-shape-rounded .resume-photo{border-radius:12px}.photo-shape-square .resume-photo{border-radius:0}.resume-header.has-photo h1,.resume-header.has-photo .resume-role,.resume-header.has-photo .contact-list{padding-right:calc(var(--photo-size) + 19px)}.photo-change{position:absolute;bottom:2px;right:2px;width:24px;height:24px;border:1px solid #cadbc4;border-radius:50%;background:white;color:#5a8065;box-shadow:0 1px 5px #263b2929;opacity:0;font-size:14px}.resume-photo-wrap:hover .photo-change,.photo-change:focus-visible{opacity:1}.photo-empty-trigger{position:absolute;right:0;top:47px;width:27px;height:27px;background:#fff;border:1px solid #d5e4d2;border-radius:50%;color:var(--accent);z-index:2;opacity:0}.modern .resume-header:hover .photo-empty-trigger,.photo-empty-trigger:focus-visible{opacity:1}
 @media print{.photo-change,.photo-empty-trigger{display:none!important}.resume-photo{print-color-adjust:exact;-webkit-print-color-adjust:exact}}
+
+/* Preview and PDF share these explicit page boundaries. */
+#paper-wrapper{box-shadow:none}
+#resume{display:flex;flex-direction:column;gap:22px;transform-origin:top left}
+.resume-page{flex:none;overflow:hidden;box-shadow:0 5px 18px #38462e17}
+.continued-heading h2,.continued-title h3{opacity:.78}
+.readonly-fragment{white-space:pre-wrap}
+.pagination-measuring .canvas-control,.pagination-measuring .resume-paper .editable.is-empty,.pagination-measuring .resume-paper .empty-part{display:none!important}
+.pagination-measuring .resume-block .block-inline-actions{display:none!important}
+.pdf-preview #resume{pointer-events:none}
+.pdf-preview .resume-paper .canvas-control,.pdf-preview .resume-block .block-inline-actions,.pdf-preview .resume-paper .editable.is-empty,.pdf-preview .resume-paper .empty-part{display:none!important}
+.pdf-preview .resume-paper .resume-block,.pdf-preview .resume-paper .editable{outline:none!important;box-shadow:none!important}
+.pdf-preview .resume-paper .editable{background:transparent!important}
+#toggle-pdf-view[aria-pressed=true]{color:var(--green);font-weight:650}
+@media print{
+ #resume{display:block!important;transform:none!important;gap:0!important}
+ .resume-page{width:100%!important;height:100vh!important;min-height:0!important;max-height:100vh!important;overflow:hidden!important;box-shadow:none!important;break-after:page;break-inside:avoid}
+ .resume-page:last-child{break-after:auto}
+}
