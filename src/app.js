@@ -3,14 +3,16 @@ import {contentPanel,designPanel,checkPanel,resumeHtml,libraryHtml,esc} from './
 import {paginate} from './paginate.mjs';
 import {blankResume,loadResumes,saveActiveResume,addResume,switchResume,renameResume,linkDriveFile} from './resume-store.mjs';
 import {DRIVE_SCOPE,listDriveResumes,readDriveResume,saveDriveResume} from './drive.mjs';
+import {GOOGLE_CLIENT_ID} from './config.mjs';
 
 const $=s=>document.querySelector(s);
 const clone=o=>structuredClone(o);
-const LIBRARY='folio-block-library-v1',DRIVE_CLIENT_KEY='folio-google-client-id';
+const LIBRARY='folio-block-library-v1';
 let state=clone(initial),library=[],tab='content',selectedSection='personal',selectedBlock=null,zoom=.75,pdfPreview=false,job='',history=[],future=[],toastTimer;
 let editPath='',editTime=0,dragged=null,pendingInsert=null,pendingSave=null;
-let resumes,driveClientId='',driveToken='',driveTokenExpires=0,driveTokenClient=null,googleScriptPromise=null,nameMode='new';
-try {const loaded=loadResumes(localStorage);resumes=loaded.store;state=loaded.resume;driveClientId=localStorage.getItem(DRIVE_CLIENT_KEY)||'';}
+let resumes,driveToken='',driveTokenExpires=0,driveTokenClient=null,googleScriptPromise=null,nameMode='new';
+const driveClientId=GOOGLE_CLIENT_ID.trim();
+try {const loaded=loadResumes(localStorage);resumes=loaded.store;state=loaded.resume;}
 catch{const id=crypto.randomUUID();resumes={activeId:id,entries:[{id,title:'My resume',updatedAt:0,driveId:'',driveModifiedTime:''}]};setTimeout(()=>toast('Saved resumes could not be loaded. Import a backup to recover them.'),100);}
 try {const saved=localStorage.getItem(LIBRARY);if(saved)library=validateLibrary(JSON.parse(saved));}
 catch{setTimeout(()=>toast('The saved block library could not be loaded.'),100);}
@@ -32,20 +34,14 @@ function loadGoogleScript(){
 }
 function openDriveDialog(){
  $('#drive-origin').textContent=location.origin;
- $('#google-client-id').value=driveClientId;
+ $('#drive-connect').disabled=!driveClientId;
  updateDriveButtons();
- driveStatus(driveReady()?'Connected for this session.':driveClientId?'Loading Google sign-in…':'Add your Google OAuth Web client ID to connect.');
+ driveStatus(driveReady()?'Connected for this session.':driveClientId?'Loading Google sign-in…':'Google Drive sign-in has not been configured for this site yet. You can still download a JSON backup.');
  $('#drive-dialog').showModal();
  if(driveClientId)loadGoogleScript().then(()=>{if(!driveReady())driveStatus('Ready to connect Google Drive.');}).catch(error=>driveStatus(error.message));
 }
-function saveDriveSetup(){
- const value=$('#google-client-id').value.trim();
- if(!/^[a-z0-9-]+\.apps\.googleusercontent\.com$/i.test(value)){driveStatus('Enter a Google OAuth Web client ID ending in .apps.googleusercontent.com.');return;}
- try{localStorage.setItem(DRIVE_CLIENT_KEY,value);driveClientId=value;driveToken='';driveTokenExpires=0;driveTokenClient=null;updateDriveButtons();driveStatus('Loading Google sign-in…');loadGoogleScript().then(()=>driveStatus('Ready to connect Google Drive.')).catch(error=>driveStatus(error.message));}
- catch{driveStatus('Could not save your client ID in this browser.');}
-}
 function connectDrive(){
- if(!driveClientId){driveStatus('Save your Google OAuth Web client ID first.');return;}
+ if(!driveClientId){driveStatus('Google Drive sign-in has not been configured for this site yet.');return;}
  if(!window.google?.accounts?.oauth2){driveStatus('Google sign-in is still loading. Try again in a moment.');return;}
  if(!driveTokenClient)driveTokenClient=google.accounts.oauth2.initTokenClient({
    client_id:driveClientId,scope:DRIVE_SCOPE,callback:response=>{
@@ -195,7 +191,6 @@ document.addEventListener('click',event=>{
    catch(error){toast(error.message||'Could not duplicate resume.');}
  }
  if(b.id==='drive')openDriveDialog();
- if(b.id==='drive-setup')saveDriveSetup();
  if(b.id==='drive-connect')connectDrive();
  if(b.id==='drive-disconnect')disconnectDrive();
  if(b.id==='drive-save')saveCurrentToDrive();

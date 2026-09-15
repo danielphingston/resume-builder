@@ -85,8 +85,16 @@ test('multiple resumes save independently and switch across reloads',async({page
  expect((await state(page)).name).toBe('Alex Engineer');
 });
 
-test('Google Drive setup saves and opens a resume as a separate local copy',async({page})=>{
+test('unconfigured Google Drive asks no visitor for OAuth credentials',async({page})=>{
+ await page.getByRole('button',{name:'Google Drive',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Connect Google Drive'})).toBeDisabled();
+ await expect(page.locator('#drive-status')).toContainText('not been configured');
+ await expect(page.locator('#drive-dialog input')).toHaveCount(0);
+});
+
+test('Google sign-in saves and opens a Drive resume as a separate local copy',async({page})=>{
  let uploaded='';
+ await page.route('**/src/config.mjs',route=>route.fulfill({contentType:'text/javascript',body:"export const GOOGLE_CLIENT_ID='123-test.apps.googleusercontent.com';"}));
  await page.route('https://accounts.google.com/gsi/client',route=>route.fulfill({contentType:'text/javascript',body:`window.google={accounts:{oauth2:{initTokenClient(config){return {requestAccessToken(){config.callback({access_token:'mock-token',expires_in:3600,scope:config.scope});}}},hasGrantedAllScopes(response,scope){return response.scope===scope},revoke(token,done){done()}}}};`}));
  await page.route('https://www.googleapis.com/**',route=>{
    const request=route.request(),url=request.url();
@@ -95,9 +103,8 @@ test('Google Drive setup saves and opens a resume as a separate local copy',asyn
    if(url.includes('/drive/v3/files?'))return route.fulfill({contentType:'application/json',body:JSON.stringify({files:[{id:'drive-one',name:'Jordan Davis.folio.json',modifiedTime:'2026-09-15T10:00:00Z'}]})});
    return route.fulfill({status:404,contentType:'application/json',body:'{}'});
  });
+ await page.reload();
  await page.getByRole('button',{name:'Google Drive',exact:true}).click();
- await page.locator('#google-client-id').fill('123-test.apps.googleusercontent.com');
- await page.getByRole('button',{name:'Save setup'}).click();
  await expect(page.locator('#drive-status')).toContainText('Ready to connect');
  await page.getByRole('button',{name:'Connect Google Drive'}).click();
  await expect(page.locator('#drive-status')).toContainText('Connected');
