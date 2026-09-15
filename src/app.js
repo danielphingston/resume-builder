@@ -1,4 +1,4 @@
-import {initial,validateResume,validateLibrary,validatePhoto,createBlock,createSection,duplicateBlock,moveBlock,moveSection} from './model.mjs';
+import {initial,validateResume,validateLibrary,validatePhoto,createBlock,createSection,duplicateBlock,moveBlock,moveSection,quickStyles} from './model.mjs';
 import {contentPanel,designPanel,checkPanel,resumeHtml,libraryHtml,esc} from './view.mjs';
 import {paginate} from './paginate.mjs';
 import {blankResume,loadResumes,saveActiveResume,addResume,switchResume,renameResume,linkDriveFile} from './resume-store.mjs';
@@ -8,7 +8,7 @@ import {GOOGLE_CLIENT_ID} from './config.mjs';
 const $=s=>document.querySelector(s);
 const clone=o=>structuredClone(o);
 const LIBRARY='folio-block-library-v1';
-let state=clone(initial),library=[],tab='content',selectedSection='personal',selectedBlock=null,zoom=.75,pdfPreview=false,job='',history=[],future=[],toastTimer;
+let state=clone(initial),library=[],tab='content',selectedSection='personal',selectedBlock=null,pdfPreview=false,job='',history=[],future=[],toastTimer,panelAnimation;
 let editPath='',editTime=0,dragged=null,pendingInsert=null,pendingSave=null;
 let resumes,driveToken='',driveTokenExpires=0,driveTokenClient=null,googleScriptPromise=null,nameMode='new';
 const driveClientId=GOOGLE_CLIENT_ID.trim();
@@ -21,6 +21,11 @@ function persist(){try{saveActiveResume(localStorage,resumes,state);$('#save-sta
 function persistLibrary(){try{localStorage.setItem(LIBRARY,JSON.stringify(library));return true;}catch{toast('Library could not be saved. Download a backup.');return false;}}
 let driveFiles=[];
 function driveStatus(message){$('#drive-status').textContent=message;}
+function driveErrorMessage(error,fallback){
+ if(error?.code==='REMOTE_CHANGED'||error?.message==='Connect Google Drive again to continue.'||error?.message?.startsWith('This resume is too large'))return error.message;
+ if(error?.status===401||error?.status===403)return 'Google Drive access needs to be renewed. Connect again and try.';
+ return fallback;
+}
 function driveReady(){return !!driveToken&&Date.now()<driveTokenExpires;}
 function updateDriveButtons(){const ready=driveReady();for(const id of ['drive-save','drive-new-copy','drive-browse'])$(`#${id}`).disabled=!ready;$('#drive-disconnect').hidden=!ready;}
 function loadGoogleScript(){
@@ -33,15 +38,14 @@ function loadGoogleScript(){
  return googleScriptPromise;
 }
 function openDriveDialog(){
- $('#drive-origin').textContent=location.origin;
  $('#drive-connect').disabled=!driveClientId;
  updateDriveButtons();
- driveStatus(driveReady()?'Connected for this session.':driveClientId?'Loading Google sign-in…':'Google Drive sign-in has not been configured for this site yet. You can still download a JSON backup.');
+ driveStatus(driveReady()?'Connected for this session.':driveClientId?'Loading Google sign-in…':'Google Drive is unavailable right now. You can still download a backup.');
  $('#drive-dialog').showModal();
  if(driveClientId)loadGoogleScript().then(()=>{if(!driveReady())driveStatus('Ready to connect Google Drive.');}).catch(error=>driveStatus(error.message));
 }
 function connectDrive(){
- if(!driveClientId){driveStatus('Google Drive sign-in has not been configured for this site yet.');return;}
+ if(!driveClientId){driveStatus('Google Drive is unavailable right now.');return;}
  if(!window.google?.accounts?.oauth2){driveStatus('Google sign-in is still loading. Try again in a moment.');return;}
  if(!driveTokenClient)driveTokenClient=google.accounts.oauth2.initTokenClient({
    client_id:driveClientId,scope:DRIVE_SCOPE,callback:response=>{
@@ -66,7 +70,7 @@ async function saveCurrentToDrive(asNew=false){
    const saved=await saveDriveResume(currentDriveToken(),asNew?{...entry,driveId:'',driveModifiedTime:''}:entry,state,library);
    linkDriveFile(localStorage,resumes,entry.id,saved.id,saved.modifiedTime||'');
    renderResumesList();driveStatus(`Saved ${entry.title} to Google Drive.`);
- }catch(error){driveStatus(error.message||'Could not save to Google Drive.');}
+ }catch(error){driveStatus(driveErrorMessage(error,'Could not save to Google Drive. Try again.'));}
  finally{updateDriveButtons();}
 }
 async function browseDrive(){
@@ -75,7 +79,7 @@ async function browseDrive(){
    driveFiles=await listDriveResumes(currentDriveToken());
    $('#drive-files').innerHTML=driveFiles.length?driveFiles.map(f=>`<div class="drive-file-row"><div><strong>${esc(f.name)}</strong><small>${f.modifiedTime?new Date(f.modifiedTime).toLocaleString():''}</small></div><button type="button" class="button outline" data-open-drive="${esc(f.id)}">Open</button></div>`).join(''):'<p>No resumes saved by this app were found in Drive.</p>';
    driveStatus(`${driveFiles.length} ${driveFiles.length===1?'resume':'resumes'} found in Google Drive.`);
- }catch(error){driveStatus(error.message||'Could not list Drive resumes.');}
+ }catch(error){driveStatus(driveErrorMessage(error,'Could not list Drive resumes. Try again.'));}
  finally{updateDriveButtons();}
 }
 async function openDriveFile(id){
@@ -89,7 +93,7 @@ async function openDriveFile(id){
    if(!existing)linkDriveFile(localStorage,resumes,entry.id,id,file.modifiedTime||'');
    if(!library.length&&Array.isArray(data.blockLibrary)){try{library=validateLibrary(data.blockLibrary);persistLibrary();}catch{}}
    activateResume(incoming);$('#drive-dialog').close();toast('Resume opened from Google Drive as a separate local resume.');
- }catch(error){driveStatus(error.message||'Could not open this Drive resume.');}
+ }catch(error){driveStatus(driveErrorMessage(error,'Could not open this Drive resume. Try again.'));}
 }
 function snapshot(){history.push(clone(state));if(history.length>80)history.shift();future=[];}
 function commit(change){snapshot();editPath='';change();persist();render();}
@@ -100,12 +104,21 @@ function getPath(path){return path.split('.').reduce((o,k)=>o?.[k],state);}
 function setPath(path,value){const keys=path.split('.'),last=keys.pop();keys.reduce((o,k)=>o[k],state)[last]=value;}
 function blockLocation(id){for(const section of state.sections){const index=section.blocks.findIndex(b=>b.id===id);if(index>=0)return {section,index,block:section.blocks[index]};}return null;}
 function normalizeSelection(){if(selectedBlock){const found=blockLocation(selectedBlock);if(found)selectedSection=found.section.id;else selectedBlock=null;}if(selectedSection&&selectedSection!=='personal'&&!state.sections.some(s=>s.id===selectedSection))selectedSection=state.sections[0]?.id||'personal';}
-function renderEditor(){normalizeSelection();$('#editor-content').innerHTML=tab==='content'?contentPanel(state,selectedSection,selectedBlock):tab==='design'?designPanel(state):checkPanel(state,job);}
+function renderEditor(animate=false){
+ normalizeSelection();
+ const editor=$('#editor-content');
+ panelAnimation?.cancel();
+ editor.innerHTML=tab==='content'?contentPanel(state,selectedSection,selectedBlock):tab==='design'?designPanel(state):checkPanel(state,job);
+ panelAnimation=animate&&!matchMedia('(prefers-reduced-motion: reduce)').matches
+   ?editor.animate([{opacity:.55,transform:'translateY(7px)'},{opacity:1,transform:'translateY(0)'}],{duration:180,easing:'ease-out'})
+   :null;
+}
 function renderPreview(){const d=state.design,p=$('#resume');
  const count=paginate(p,resumeHtml(state,selectedSection,selectedBlock),d,selectedSection,selectedBlock);
  $('#paper-label').textContent=d.paper==='a4'?'A4':'LETTER';$('#page-count').textContent=`${count} ${count===1?'page':'pages'}`;
  let printStyle=$('#print-size');if(!printStyle){printStyle=document.createElement('style');printStyle.id='print-size';document.head.append(printStyle);}printStyle.textContent=`@page {size:${d.paper==='a4'?'A4':'letter'};margin:0;}`;
- applyZoom();
+ $('#paper-wrapper').style.width=`${d.paper==='letter'?816:794}px`;
+ scheduleEditingPageExtension();
 }
 function activeResumeEntry(){return resumes.entries.find(e=>e.id===resumes.activeId);}
 function renderResumesList(){
@@ -114,13 +127,25 @@ function renderResumesList(){
 }
 function render(){normalizeSelection();renderEditor();renderPreview();renderResumesList();updateUndo();}
 function activateResume(resume){state=resume;history=[];future=[];editPath='';selectedSection='personal';selectedBlock=null;job='';tab='content';document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab==='content'));render();$('#save-status').textContent='● Saved on this device';}
-function applyZoom(){const p=$('#resume');p.style.transform=`scale(${zoom})`;$('#paper-wrapper').style.width=`${(state.design.paper==='letter'?816:794)*zoom}px`;$('#paper-wrapper').style.height=`${p.offsetHeight*zoom}px`;$('#zoom-value').textContent=`${Math.round(zoom*100)}%`;}
-function fit(){zoom=Math.min(.95,Math.max(.25,($('#preview-scroll').clientWidth-64)/(state.design.paper==='letter'?816:794)));applyZoom();}
-function switchTab(next){tab=next;document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));renderEditor();}
+function switchTab(next,animate=next!==tab){tab=next;document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));renderEditor(animate);}
 function syncSelection(){document.querySelectorAll('#resume [data-block]').forEach(el=>el.classList.toggle('selected',el.dataset.block===selectedBlock));document.querySelectorAll('#resume [data-section]').forEach(el=>el.classList.toggle('section-selected',el.dataset.section===selectedSection));$('#resume .resume-header').classList.toggle('section-selected',selectedSection==='personal');}
-function clearSelection(){selectedSection=null;selectedBlock=null;renderEditor();syncSelection();}
-function selectBlock(id){const found=blockLocation(id);if(!found)return;selectedBlock=id;selectedSection=found.section.id;switchTab('content');$('#editor-content').scrollTop=0;syncSelection();}
-function selectSection(id){selectedSection=id;selectedBlock=null;switchTab('content');syncSelection();}
+let editingPageFrame=0;
+function scheduleEditingPageExtension(){
+ cancelAnimationFrame(editingPageFrame);
+ editingPageFrame=requestAnimationFrame(()=>{
+   const baseHeight=state.design.paper==='letter'?1056:1123;
+   for(const page of document.querySelectorAll('#resume .resume-page')){
+     page.style.height=`${baseHeight}px`;
+     if(!selectedBlock&&!selectedSection)continue;
+     const top=page.getBoundingClientRect().top;
+     const contentBottom=Math.max(0,...[...page.querySelectorAll('.resume-header,.section-heading-row,.resume-block')].map(el=>el.getBoundingClientRect().bottom-top));
+     page.style.height=`${Math.max(baseHeight,Math.ceil(contentBottom+state.design.margin+18))}px`;
+   }
+ });
+}
+function clearSelection(){const changed=!!selectedSection||!!selectedBlock;selectedSection=null;selectedBlock=null;renderEditor(changed);renderPreview();}
+function selectBlock(id){const found=blockLocation(id);if(!found)return;const changed=selectedBlock!==id||selectedSection!==found.section.id||tab!=='content';selectedBlock=id;selectedSection=found.section.id;switchTab('content',changed);$('#editor-content').scrollTop=0;syncSelection();scheduleEditingPageExtension();}
+function selectSection(id){const changed=selectedSection!==id||!!selectedBlock||tab!=='content';selectedSection=id;selectedBlock=null;switchTab('content',changed);syncSelection();scheduleEditingPageExtension();}
 function focusEdit(path,atEnd=false){const el=[...document.querySelectorAll('[data-edit]')].find(e=>e.dataset.edit===path);if(!el)return;el.focus();const range=document.createRange();range.selectNodeContents(el);range.collapse(!atEnd);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);}
 function openLibrary(sectionId=null,column='main'){pendingInsert={sectionId,column};$('#section-dialog h2').textContent=sectionId?'Add a block':'Add a section';$('#section-dialog .dialog-description').textContent=sectionId?'Start with a preset. Every part is yours to change.':'Create a group, then add and arrange blocks inside it.';$('#section-options').innerHTML=libraryHtml(library,!sectionId);$('#section-dialog').showModal();}
 function insertBlock(block){const section=state.sections.find(s=>s.id===pendingInsert?.sectionId);if(!section)return;commit(()=>{section.blocks.push(block);selectedSection=section.id;selectedBlock=block.id;});$('#section-dialog').close();}
@@ -131,7 +156,7 @@ function removeBullet(id,index){const found=blockLocation(id);if(!found)return;c
 
 let clickAway=false;
 document.addEventListener('pointerdown',event=>{
- clickAway=!event.target.closest('#resume [data-block],#resume [data-section],#resume .resume-header,.inspector,.section-card,[data-select-section],[data-select-block],dialog');
+ clickAway=!event.target.closest('#editor-content,#resume [data-block],#resume [data-section],#resume .resume-header,dialog');
 });
 
 document.addEventListener('click',event=>{
@@ -154,7 +179,7 @@ document.addEventListener('click',event=>{
  if(d.color)commit(()=>state.design.accent=d.color);
  if(d.columns)commit(()=>state.design.columns=+d.columns);
  if(d.reset)commit(()=>setPath(d.reset,''));
- if(b.id==='reference-style')commit(()=>Object.assign(state.design,{accent:'#990000',subtitleColor:'#ff7700',textColor:'#35454f',font:'arial',headingStyle:'line',bulletStyle:'disc',icons:'classic'}));
+ if(d.stylePreset){const style=quickStyles.find(s=>s.id===d.stylePreset);if(style&&Object.entries(style.design).some(([key,value])=>state.design[key]!==value))commit(()=>Object.assign(state.design,style.design));}
  if(b.id==='add-section')openLibrary();
  if(d.addSectionColumn)openLibrary(null,d.addSectionColumn);
  if(d.addBlock)openLibrary(d.addBlock);
@@ -202,9 +227,6 @@ document.addEventListener('click',event=>{
  if(b.id==='choose-photo'||d.uploadPhoto!==undefined)$('#photo-file').click();
  if(b.id==='remove-photo')commit(()=>state.photo='');
  if(b.id==='export'){document.activeElement?.blur();renderPreview();window.print();}
- if(b.id==='zoom-in'){zoom=Math.min(1.25,zoom+.1);applyZoom();}
- if(b.id==='zoom-out'){zoom=Math.max(.25,zoom-.1);applyZoom();}
- if(b.id==='fit')fit();
  if(b.id==='toggle-pdf-view'){
    pdfPreview=!pdfPreview;
    $('.preview-workspace').classList.toggle('pdf-preview',pdfPreview);
@@ -214,7 +236,7 @@ document.addEventListener('click',event=>{
    $('.preview-footer span:last-child').textContent=pdfPreview?'Page layout as it prints':'Click to edit · drag handles to rearrange';
    clearSelection();
  }
- if(b.id==='match-job'){job=$('#job-description').value;renderEditor();}
+ if(b.id==='match-job'){job=$('#job-description').value;renderEditor(true);}
  if(clickedAway&&b.id!=='toggle-pdf-view')clearSelection();
 });
 $('#resume-name-form').addEventListener('submit',event=>{
@@ -230,10 +252,10 @@ $('#save-dialog [data-close]').addEventListener('click',()=>$('#save-dialog').cl
 
 function recordEdit(path,value){if(getPath(path)===value)return;if(editPath!==path||Date.now()-editTime>1200)snapshot();editPath=path;editTime=Date.now();setPath(path,value);persist();updateUndo();}
 document.addEventListener('focusin',e=>{const el=e.target.closest('[data-edit]');if(!el)return;editPath='';const block=el.closest('[data-block]');if(block){if(selectedBlock!==block.dataset.block)selectBlock(block.dataset.block);}else{const section=el.closest('[data-section]');if(selectedSection!==(section?.dataset.section||'personal')||selectedBlock)selectSection(section?.dataset.section||'personal');}});
-document.addEventListener('focusout',e=>{if(e.target.matches('[data-edit]')){editPath='';e.target.classList.toggle('is-empty',!e.target.textContent);requestAnimationFrame(()=>{if(!document.activeElement?.closest('#resume [data-edit]'))renderPreview();});}});
+document.addEventListener('focusout',e=>{if(e.target.matches('[data-edit]')){editPath='';e.target.classList.toggle('is-empty',!e.target.textContent);scheduleEditingPageExtension();}});
 document.addEventListener('input',e=>{
  const el=e.target;if(el.id==='job-description'){job=el.value;return;}
- if(el.dataset.edit){const value=el.innerText.replace(/\r\n/g,'\n');recordEdit(el.dataset.edit,value);document.querySelectorAll('[data-path]').forEach(input=>{if(input.dataset.path===el.dataset.edit)input.value=value;});el.classList.toggle('is-empty',!value);const part=el.closest('.metadata-part,.contact-item');if(part)part.classList.toggle('empty-part',!value);return;}
+ if(el.dataset.edit){const value=el.innerText.replace(/\r\n/g,'\n');recordEdit(el.dataset.edit,value);document.querySelectorAll('[data-path]').forEach(input=>{if(input.dataset.path===el.dataset.edit)input.value=value;});el.classList.toggle('is-empty',!value);const part=el.closest('.metadata-part,.contact-item');if(part)part.classList.toggle('empty-part',!value);scheduleEditingPageExtension();return;}
  if(!el.dataset.path||el.tagName==='SELECT')return;
  const path=el.dataset.path;let value=el.type==='range'?+el.value:el.value;
  if(path.endsWith('.bullets'))value=value?value.split('\n'):[];
@@ -303,5 +325,4 @@ document.addEventListener('pointerdown',e=>{const handle=e.target.closest('[data
 document.addEventListener('pointermove',e=>{if(!touchHandle)return;const target=document.elementFromPoint(e.clientX,e.clientY);if(target)showDrop(target,e.clientY);});
 document.addEventListener('pointerup',e=>{if(!touchHandle)return;const target=document.elementFromPoint(e.clientX,e.clientY);if(target)performDrop(target,e.clientY);else clearDrag();touchHandle=null;});
 document.addEventListener('pointercancel',()=>{if(touchHandle){touchHandle=null;clearDrag();}});
-window.addEventListener('resize',fit);new ResizeObserver(applyZoom).observe($('#resume'));
-render();requestAnimationFrame(fit);
+render();

@@ -4,6 +4,12 @@ export const fonts = [['sans','System sans'],['arial','Arial'],['verdana','Verda
 export const bulletStyles = [['disc','• Solid dot'],['circle','○ Circle'],['square','▪ Square'],['dash','– Dash'],['arrow','› Arrow'],['check','✓ Checkmark'],['decimal','1. Numbered'],['none','No marker']];
 export const blockIcons = [['none','No icon'],['briefcase','Briefcase'],['code','Code'],['book','Education'],['star','Star'],['award','Award'],['heart','Heart'],['globe','Globe']];
 export const defaultDesign = {...legacyInitial.design, subtitleColor:'#205c52', textColor:'#404743', bulletStyle:'disc', headingStyle:'plain', photoShape:'auto', photoPosition:'center', photoSize:96};
+export const quickStyles = [
+  {id:'engineering',label:'Engineering',description:'Burgundy · orange · ruled',design:{accent:'#990000',subtitleColor:'#ff7700',textColor:'#35454f',font:'arial',headingStyle:'line',bulletStyle:'disc',icons:'classic'}},
+  {id:'executive',label:'Executive',description:'Navy · serif · single column',design:{template:'classic',columns:1,accent:'#263d66',subtitleColor:'#405b80',textColor:'#303a47',font:'serif',headingStyle:'line',bulletStyle:'disc',icons:'none',background:'clean'}},
+  {id:'minimal',label:'Minimal',description:'Charcoal · clean · single column',design:{template:'editorial',columns:1,accent:'#303438',subtitleColor:'#69716d',textColor:'#404743',font:'sans',headingStyle:'plain',bulletStyle:'dash',icons:'none',background:'clean'}},
+  {id:'creative',label:'Creative',description:'Purple · warm · color bands',design:{template:'modern',columns:2,accent:'#705174',subtitleColor:'#ab7831',textColor:'#34303a',font:'trebuchet',headingStyle:'band',bulletStyle:'arrow',icons:'classic',background:'tinted'}},
+];
 export const defaultStyle = {font:'inherit',titleColor:'',subtitleColor:'',textColor:'',background:'',bulletStyle:'inherit',border:'none'};
 const hex = /^#[0-9a-f]{6}$/i;
 const enumValue=(value,options,fallback)=>options.includes(value)?value:fallback;
