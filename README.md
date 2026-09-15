@@ -37,6 +37,23 @@ After the site is configured, visitors open **Google Drive** and choose **Connec
 
 The repository and Pages app may be public while resumes saved in the browser or your Drive remain outside GitHub. The OAuth client ID is meant to appear in browser code and may be public; do not commit a client secret, downloaded credentials, resume backups, or a real resume JSON. The `.gitignore` excludes common credential and backup filenames. If you later open Google sign-in to users beyond your test accounts, review Google's [OAuth domain ownership and homepage requirements](https://developers.google.com/identity/protocols/oauth2/policies); a custom domain you control may be needed for production verification.
 
+After the policy pages are published, use these values in **Google Auth Platform → Branding** and the related OAuth settings:
+
+| Field | Value |
+| --- | --- |
+| App name | `Folio Resume Studio` |
+| User support email | `danielphingston@proton.me` |
+| App homepage | `https://danielphingston.github.io/resume-builder/` |
+| Privacy policy URL | `https://danielphingston.github.io/resume-builder/privacy.html` |
+| Terms of service URL | `https://danielphingston.github.io/resume-builder/terms.html` |
+| Developer contact email | `danielphingston@proton.me` |
+| Client authorized JavaScript origin | `https://danielphingston.github.io` |
+| Data Access scope | `https://www.googleapis.com/auth/drive.file` |
+
+The support email must be selectable in Google's Branding dropdown. If the Proton address does not appear, register it as a Google Account, add that account as a project editor or owner, and sign in to the Cloud Console with it; Google's [Branding guide](https://support.google.com/cloud/answer/15549049) explains the available support email choices. Confirm that the homepage links to the policy, and use the same privacy URL in Branding. The `drive.file` scope is the only Google user-data scope requested by this app; declare it in **Data Access** as well as in the code. Google's [Drive scope guide](https://developers.google.com/workspace/drive/api/guides/api-specific-auth) covers the scope.
+
+For full OAuth brand verification, Google may require you to prove domain ownership with a DNS-level Search Console Domain Property. You cannot add a DNS TXT record to the GitHub-owned `github.io` domain. If Google requires this step, point a custom domain you own to GitHub Pages, update the homepage/policy URLs and client origin, and verify that domain in Search Console. This keeps the app on GitHub Pages without adding a backend. See Google's [domain verification guidance](https://support.google.com/cloud/answer/13804266) and GitHub's [custom domain guide](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/about-custom-domains-and-github-pages).
+
 The canvas shows separate A4 or Letter sheets using the same page breaks as PDF export. Choose **PDF view** above the canvas to inspect clean sheets without editing controls, then **Edit view** to resume editing. Sections continue on the next sheet when they run out of room; oversized bullets and paragraphs can continue within a block. For text divided across sheets, edit the complete bullet or paragraph in the block settings. Use **Export PDF**, choose Save as PDF, disable browser headers/footers, and enable background graphics for colors. Editing handles, buttons, outlines, and empty-field placeholders are excluded from print.
 
 The resume checker is an explained writing/formatting heuristic and local keyword matcher, not an employer’s ATS integration or a hiring prediction.

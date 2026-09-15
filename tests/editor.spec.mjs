@@ -23,6 +23,17 @@ async function uploadPortrait(page){
 
 test.beforeEach(async({page})=>{await page.goto('/');await expect(canvas(page).getByRole('textbox',{name:'Full name',exact:true})).toHaveText('Jordan Davis');});
 
+test('privacy and terms pages are public and linked from the editor',async({page})=>{
+ await page.getByRole('link',{name:'Privacy',exact:true}).first().click();
+ await expect(page).toHaveURL(/\/privacy\.html$/);
+ await expect(page.getByRole('heading',{name:'Privacy policy'})).toBeVisible();
+ await expect(page.getByRole('link',{name:'danielphingston@proton.me'})).toBeVisible();
+ await page.getByRole('link',{name:'Resume editor'}).first().click();
+ await page.getByRole('link',{name:'Terms',exact:true}).click();
+ await expect(page).toHaveURL(/\/terms\.html$/);
+ await expect(page.getByRole('heading',{name:'Terms of use'})).toBeVisible();
+});
+
 test('direct editing keeps the caret, syncs sidebar, survives reload, and supports undo/redo',async({page})=>{
  const name=canvas(page).getByRole('textbox',{name:'Full name',exact:true});await name.fill('Alex Rivera');await name.press('End');await page.keyboard.type(' Smith');await expect(name).toHaveText('Alex Rivera Smith');await expect(page.locator('input[data-path="name"]')).toHaveValue('Alex Rivera Smith');
  await page.getByRole('button',{name:'Undo',exact:true}).click();await expect(name).toHaveText('Jordan Davis');await page.getByRole('button',{name:'Redo',exact:true}).click();await expect(name).toHaveText('Alex Rivera Smith');
@@ -86,6 +97,8 @@ test('multiple resumes save independently and switch across reloads',async({page
 });
 
 test('unconfigured Google Drive asks no visitor for OAuth credentials',async({page})=>{
+ await page.route('**/src/config.mjs',route=>route.fulfill({contentType:'text/javascript',body:"export const GOOGLE_CLIENT_ID='';"}));
+ await page.reload();
  await page.getByRole('button',{name:'Google Drive',exact:true}).click();
  await expect(page.getByRole('button',{name:'Connect Google Drive'})).toBeDisabled();
  await expect(page.locator('#drive-status')).toContainText('not been configured');
