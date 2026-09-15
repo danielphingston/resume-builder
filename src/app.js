@@ -1,10 +1,11 @@
 import {initial,validateResume,validateLibrary,validatePhoto,createBlock,createSection,duplicateBlock,moveBlock,moveSection} from './model.mjs';
 import {contentPanel,designPanel,checkPanel,resumeHtml,libraryHtml} from './view.mjs';
+import {paginate} from './paginate.mjs';
 
 const $=s=>document.querySelector(s);
 const clone=o=>structuredClone(o);
 const STORAGE='folio-resume-v2',LIBRARY='folio-block-library-v1';
-let state=clone(initial),library=[],tab='content',selectedSection='personal',selectedBlock=null,zoom=.75,job='',history=[],future=[],toastTimer;
+let state=clone(initial),library=[],tab='content',selectedSection='personal',selectedBlock=null,zoom=.75,pdfPreview=false,job='',history=[],future=[],toastTimer;
 let editPath='',editTime=0,dragged=null,pendingInsert=null,pendingSave=null;
 try {const saved=localStorage.getItem(STORAGE)||localStorage.getItem('folio-resume-v1');if(saved)state=validateResume(JSON.parse(saved));}
 catch{setTimeout(()=>toast('Saved resume could not be loaded. Import a backup to recover it.'),100);}
@@ -21,13 +22,12 @@ function redo(){if(!future.length)return;history.push(clone(state));state=future
 function getPath(path){return path.split('.').reduce((o,k)=>o?.[k],state);}
 function setPath(path,value){const keys=path.split('.'),last=keys.pop();keys.reduce((o,k)=>o[k],state)[last]=value;}
 function blockLocation(id){for(const section of state.sections){const index=section.blocks.findIndex(b=>b.id===id);if(index>=0)return {section,index,block:section.blocks[index]};}return null;}
-function normalizeSelection(){if(selectedBlock){const found=blockLocation(selectedBlock);if(found)selectedSection=found.section.id;else selectedBlock=null;}if(selectedSection!=='personal'&&!state.sections.some(s=>s.id===selectedSection))selectedSection=state.sections[0]?.id||'personal';}
+function normalizeSelection(){if(selectedBlock){const found=blockLocation(selectedBlock);if(found)selectedSection=found.section.id;else selectedBlock=null;}if(selectedSection&&selectedSection!=='personal'&&!state.sections.some(s=>s.id===selectedSection))selectedSection=state.sections[0]?.id||'personal';}
 function renderEditor(){normalizeSelection();$('#editor-content').innerHTML=tab==='content'?contentPanel(state,selectedSection,selectedBlock):tab==='design'?designPanel(state):checkPanel(state,job);}
 function renderPreview(){const d=state.design,p=$('#resume');
- p.className=`resume-paper ${d.template} bg-${d.background} font-${d.font} headings-${d.headingStyle} default-bullets-${d.bulletStyle} icons-${d.icons}`;
- p.style.cssText=`--accent:${d.accent};--subtitle:${d.subtitleColor};--text:${d.textColor};--resume-size:${d.size}pt;--margin:${d.margin}px;--spacing:${d.spacing}px;--leading:${d.lineHeight};--ratio:${d.ratio}%;--photo-size:${d.photoSize}px;--photo-position:center ${d.photoPosition==='center'?'center':d.photoPosition};width:${d.paper==='letter'?816:794}px;min-height:${d.paper==='letter'?1056:1123}px`;
- p.innerHTML=resumeHtml(state,selectedSection,selectedBlock);$('#paper-label').textContent=d.paper==='a4'?'A4':'LETTER';
- let printStyle=$('#print-size');if(!printStyle){printStyle=document.createElement('style');printStyle.id='print-size';document.head.append(printStyle);}printStyle.textContent=`@page {size:${d.paper==='a4'?'A4':'letter'};margin:10mm;}`;
+ const count=paginate(p,resumeHtml(state,selectedSection,selectedBlock),d,selectedSection,selectedBlock);
+ $('#paper-label').textContent=d.paper==='a4'?'A4':'LETTER';$('#page-count').textContent=`${count} ${count===1?'page':'pages'}`;
+ let printStyle=$('#print-size');if(!printStyle){printStyle=document.createElement('style');printStyle.id='print-size';document.head.append(printStyle);}printStyle.textContent=`@page {size:${d.paper==='a4'?'A4':'letter'};margin:0;}`;
  applyZoom();
 }
 function render(){normalizeSelection();renderEditor();renderPreview();updateUndo();}
@@ -35,6 +35,7 @@ function applyZoom(){const p=$('#resume');p.style.transform=`scale(${zoom})`;$('
 function fit(){zoom=Math.min(.95,Math.max(.25,($('#preview-scroll').clientWidth-64)/(state.design.paper==='letter'?816:794)));applyZoom();}
 function switchTab(next){tab=next;document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));renderEditor();}
 function syncSelection(){document.querySelectorAll('#resume [data-block]').forEach(el=>el.classList.toggle('selected',el.dataset.block===selectedBlock));document.querySelectorAll('#resume [data-section]').forEach(el=>el.classList.toggle('section-selected',el.dataset.section===selectedSection));$('#resume .resume-header').classList.toggle('section-selected',selectedSection==='personal');}
+function clearSelection(){selectedSection=null;selectedBlock=null;renderEditor();syncSelection();}
 function selectBlock(id){const found=blockLocation(id);if(!found)return;selectedBlock=id;selectedSection=found.section.id;switchTab('content');$('#editor-content').scrollTop=0;syncSelection();}
 function selectSection(id){selectedSection=id;selectedBlock=null;switchTab('content');syncSelection();}
 function focusEdit(path,atEnd=false){const el=[...document.querySelectorAll('[data-edit]')].find(e=>e.dataset.edit===path);if(!el)return;el.focus();const range=document.createRange();range.selectNodeContents(el);range.collapse(!atEnd);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);}
@@ -45,9 +46,23 @@ function moveSectionBy(id,delta){const index=state.sections.findIndex(s=>s.id===
 function addBullet(id,index=null,text=''){const found=blockLocation(id);if(!found)return;const at=index??found.block.bullets.length;commit(()=>{found.block.bullets.splice(at,0,text);selectedBlock=id;selectedSection=found.section.id;});const si=state.sections.indexOf(found.section);focusEdit(`sections.${si}.blocks.${found.index}.bullets.${at}`);}
 function removeBullet(id,index){const found=blockLocation(id);if(!found)return;commit(()=>found.block.bullets.splice(index,1));}
 
+let clickAway=false;
+document.addEventListener('pointerdown',event=>{
+ clickAway=!event.target.closest('#resume [data-block],#resume [data-section],#resume .resume-header,.inspector,.section-card,[data-select-section],[data-select-block],dialog');
+});
+
 document.addEventListener('click',event=>{
+ const clickedAway=clickAway;clickAway=false;
  const b=event.target.closest('button');
- if(!b){const block=event.target.closest('#resume [data-block]');if(block&&selectedBlock!==block.dataset.block)selectBlock(block.dataset.block);return;}
+ if(!b){
+   const block=event.target.closest('#resume [data-block]');
+   if(block){if(selectedBlock!==block.dataset.block)selectBlock(block.dataset.block);return;}
+   const section=event.target.closest('#resume [data-section]');
+   if(section){if(selectedSection!==section.dataset.section||selectedBlock)selectSection(section.dataset.section);return;}
+   if(event.target.closest('#resume .resume-header')){if(selectedSection!=='personal'||selectedBlock)selectSection('personal');return;}
+   if(clickedAway)clearSelection();
+   return;
+ }
  const d=b.dataset;
  if(d.tab)switchTab(d.tab);
  if(d.selectSection)selectSection(d.selectSection);
@@ -80,18 +95,28 @@ document.addEventListener('click',event=>{
  if(b.id==='import')$('#import-file').click();
  if(b.id==='choose-photo'||d.uploadPhoto!==undefined)$('#photo-file').click();
  if(b.id==='remove-photo')commit(()=>state.photo='');
- if(b.id==='export'){document.activeElement?.blur();window.print();}
+ if(b.id==='export'){document.activeElement?.blur();renderPreview();window.print();}
  if(b.id==='zoom-in'){zoom=Math.min(1.25,zoom+.1);applyZoom();}
  if(b.id==='zoom-out'){zoom=Math.max(.25,zoom-.1);applyZoom();}
  if(b.id==='fit')fit();
+ if(b.id==='toggle-pdf-view'){
+   pdfPreview=!pdfPreview;
+   $('.preview-workspace').classList.toggle('pdf-preview',pdfPreview);
+   $('#preview-mode').textContent=pdfPreview?'PDF PREVIEW':'EDITABLE CANVAS';
+   b.textContent=pdfPreview?'Edit view':'PDF view';
+   b.setAttribute('aria-pressed',String(pdfPreview));
+   $('.preview-footer span:last-child').textContent=pdfPreview?'Page layout as it prints':'Click to edit · drag handles to rearrange';
+   clearSelection();
+ }
  if(b.id==='match-job'){job=$('#job-description').value;renderEditor();}
+ if(clickedAway&&b.id!=='toggle-pdf-view')clearSelection();
 });
 $('#save-preset-form').addEventListener('submit',e=>{e.preventDefault();const name=$('#preset-name').value.trim();if(!name)return;if(library.length>=50){toast('Your library holds up to 50 presets. Remove one to save another.');return;}library.push({id:crypto.randomUUID(),name,block:pendingSave});const saved=persistLibrary();$('#save-dialog').close();if(saved)toast('Block saved to your library.');});
 $('#save-dialog [data-close]').addEventListener('click',()=>$('#save-dialog').close());
 
 function recordEdit(path,value){if(getPath(path)===value)return;if(editPath!==path||Date.now()-editTime>1200)snapshot();editPath=path;editTime=Date.now();setPath(path,value);persist();updateUndo();}
 document.addEventListener('focusin',e=>{const el=e.target.closest('[data-edit]');if(!el)return;editPath='';const block=el.closest('[data-block]');if(block){if(selectedBlock!==block.dataset.block)selectBlock(block.dataset.block);}else{const section=el.closest('[data-section]');if(selectedSection!==(section?.dataset.section||'personal')||selectedBlock)selectSection(section?.dataset.section||'personal');}});
-document.addEventListener('focusout',e=>{if(e.target.matches('[data-edit]')){editPath='';e.target.classList.toggle('is-empty',!e.target.textContent);}});
+document.addEventListener('focusout',e=>{if(e.target.matches('[data-edit]')){editPath='';e.target.classList.toggle('is-empty',!e.target.textContent);requestAnimationFrame(()=>{if(!document.activeElement?.closest('#resume [data-edit]'))renderPreview();});}});
 document.addEventListener('input',e=>{
  const el=e.target;if(el.id==='job-description'){job=el.value;return;}
  if(el.dataset.edit){const value=el.innerText.replace(/\r\n/g,'\n');recordEdit(el.dataset.edit,value);document.querySelectorAll('[data-path]').forEach(input=>{if(input.dataset.path===el.dataset.edit)input.value=value;});el.classList.toggle('is-empty',!value);const part=el.closest('.metadata-part,.contact-item');if(part)part.classList.toggle('empty-part',!value);return;}
