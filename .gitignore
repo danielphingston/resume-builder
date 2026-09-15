@@ -2,3 +2,7 @@ node_modules/
 test-results/
 playwright-report/
 *.log
+client_secret*.json
+credentials*.json
+*.folio.json
+resume-backups/

@@ -4,7 +4,7 @@ import {initial} from '../src/model.mjs';
 import {readFileSync,writeFileSync} from 'node:fs';
 const canvas=page=>page.locator('#resume');
 const block=page=>canvas(page).locator('[data-block]').nth(1);
-const state=page=>page.evaluate(()=>JSON.parse(localStorage.getItem('folio-resume-v2')));
+const state=page=>page.evaluate(()=>{const list=JSON.parse(localStorage.getItem('folio-resumes-v1'));return JSON.parse(localStorage.getItem(`folio-resume-doc-${list.activeId}`));});
 const openDesign=page=>page.locator('.panel-tabs [data-tab="design"]').click();
 const openContent=page=>page.locator('.panel-tabs [data-tab="content"]').click();
 async function selectBlock(page){await block(page).getByRole('textbox',{name:'Block title',exact:true}).click();}
@@ -22,6 +22,17 @@ async function uploadPortrait(page){
 }
 
 test.beforeEach(async({page})=>{await page.goto('/');await expect(canvas(page).getByRole('textbox',{name:'Full name',exact:true})).toHaveText('Jordan Davis');});
+
+test('privacy and terms pages are public and linked from the editor',async({page})=>{
+ await page.getByRole('link',{name:'Privacy',exact:true}).first().click();
+ await expect(page).toHaveURL(/\/privacy\.html$/);
+ await expect(page.getByRole('heading',{name:'Privacy policy'})).toBeVisible();
+ await expect(page.getByRole('link',{name:'danielphingston@proton.me'})).toBeVisible();
+ await page.getByRole('link',{name:'Resume editor'}).first().click();
+ await page.getByRole('link',{name:'Terms',exact:true}).click();
+ await expect(page).toHaveURL(/\/terms\.html$/);
+ await expect(page.getByRole('heading',{name:'Terms of use'})).toBeVisible();
+});
 
 test('direct editing keeps the caret, syncs sidebar, survives reload, and supports undo/redo',async({page})=>{
  const name=canvas(page).getByRole('textbox',{name:'Full name',exact:true});await name.fill('Alex Rivera');await name.press('End');await page.keyboard.type(' Smith');await expect(name).toHaveText('Alex Rivera Smith');await expect(page.locator('input[data-path="name"]')).toHaveValue('Alex Rivera Smith');
@@ -56,6 +67,69 @@ test('PDF view shows clean sheets and can return to editing',async({page})=>{
  await expect(page.locator('#preview-mode')).toHaveText('EDITABLE CANVAS');
  await selectBlock(page);
  await expect(block(page).locator('.block-toolbar')).toBeVisible();
+});
+
+test('multiple resumes save independently and switch across reloads',async({page})=>{
+ await page.getByRole('button',{name:'Manage resumes'}).click();
+ await page.getByRole('button',{name:'＋ New resume'}).click();
+ await page.getByLabel('Resume title').fill('Engineering version');
+ await page.locator('#resume-name-form').getByRole('button',{name:'Save'}).click();
+ await expect(page.locator('#current-resume-title')).toHaveText('Engineering version');
+ expect((await state(page)).sections).toHaveLength(0);
+ await page.locator('input[data-path="name"]').fill('Alex Engineer');
+ await page.reload();
+ await expect(page.locator('#current-resume-title')).toHaveText('Engineering version');
+ expect((await state(page)).name).toBe('Alex Engineer');
+ await page.getByRole('button',{name:'Manage resumes'}).click();
+ await page.locator('.resume-list-row').filter({hasText:'Jordan Davis'}).getByRole('button',{name:'Open'}).click();
+ await expect(canvas(page).getByRole('textbox',{name:'Full name',exact:true})).toHaveText('Jordan Davis');
+ await expect(page.getByRole('button',{name:'Undo',exact:true})).toBeDisabled();
+ await page.getByRole('button',{name:'Manage resumes'}).click();
+ await page.locator('.resume-list-row').filter({hasText:'Engineering version'}).getByRole('button',{name:'Open'}).click();
+ expect((await state(page)).name).toBe('Alex Engineer');
+ await page.getByRole('button',{name:'Manage resumes'}).click();
+ await page.getByRole('button',{name:'Duplicate current'}).click();
+ await expect(page.locator('#current-resume-title')).toHaveText('Engineering version copy');
+ await page.locator('input[data-path="name"]').fill('Copy Engineer');
+ await page.getByRole('button',{name:'Manage resumes'}).click();
+ await page.locator('.resume-list-row').filter({hasText:'Engineering version'}).filter({hasNotText:'copy'}).getByRole('button',{name:'Open'}).click();
+ expect((await state(page)).name).toBe('Alex Engineer');
+});
+
+test('unconfigured Google Drive asks no visitor for OAuth credentials',async({page})=>{
+ await page.route('**/src/config.mjs',route=>route.fulfill({contentType:'text/javascript',body:"export const GOOGLE_CLIENT_ID='';"}));
+ await page.reload();
+ await page.getByRole('button',{name:'Google Drive',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Connect Google Drive'})).toBeDisabled();
+ await expect(page.locator('#drive-status')).toContainText('not been configured');
+ await expect(page.locator('#drive-dialog input')).toHaveCount(0);
+});
+
+test('Google sign-in saves and opens a Drive resume as a separate local copy',async({page})=>{
+ let uploaded='';
+ await page.route('**/src/config.mjs',route=>route.fulfill({contentType:'text/javascript',body:"export const GOOGLE_CLIENT_ID='123-test.apps.googleusercontent.com';"}));
+ await page.route('https://accounts.google.com/gsi/client',route=>route.fulfill({contentType:'text/javascript',body:`window.google={accounts:{oauth2:{initTokenClient(config){return {requestAccessToken(){config.callback({access_token:'mock-token',expires_in:3600,scope:config.scope});}}},hasGrantedAllScopes(response,scope){return response.scope===scope},revoke(token,done){done()}}}};`}));
+ await page.route('https://www.googleapis.com/**',route=>{
+   const request=route.request(),url=request.url();
+   if(url.includes('/upload/drive/v3/files')){uploaded=request.postData()||'';return route.fulfill({contentType:'application/json',body:JSON.stringify({id:'drive-one',modifiedTime:'2026-09-15T10:00:00Z'})});}
+   if(url.includes('alt=media'))return route.fulfill({contentType:'application/json',body:JSON.stringify({...initial,name:'From Google Drive'})});
+   if(url.includes('/drive/v3/files?'))return route.fulfill({contentType:'application/json',body:JSON.stringify({files:[{id:'drive-one',name:'Jordan Davis.folio.json',modifiedTime:'2026-09-15T10:00:00Z'}]})});
+   return route.fulfill({status:404,contentType:'application/json',body:'{}'});
+ });
+ await page.reload();
+ await page.getByRole('button',{name:'Google Drive',exact:true}).click();
+ await expect(page.locator('#drive-status')).toContainText('Ready to connect');
+ await page.getByRole('button',{name:'Connect Google Drive'}).click();
+ await expect(page.locator('#drive-status')).toContainText('Connected');
+ await page.getByRole('button',{name:'Save current to Drive'}).click();
+ await expect(page.locator('#drive-status')).toContainText('Saved Jordan Davis');
+ expect(uploaded).toContain('"name":"Jordan Davis"');
+ expect((await page.evaluate(()=>JSON.parse(localStorage.getItem('folio-resumes-v1')))).entries[0].driveId).toBe('drive-one');
+ await page.getByRole('button',{name:'Open from Drive'}).click();
+ await page.locator('[data-open-drive="drive-one"]').click();
+ await expect(page.locator('#current-resume-title')).toHaveText('Jordan Davis (Drive copy)');
+ expect((await state(page)).name).toBe('From Google Drive');
+ expect((await page.evaluate(()=>JSON.parse(localStorage.getItem('folio-resumes-v1')))).entries).toHaveLength(2);
 });
 
 test('bullet Enter splits at the caret and Backspace removes an empty bullet',async({page})=>{
@@ -117,7 +191,7 @@ test('global styles inherit, individual overrides win, and reset restores inheri
 });
 
 test('legacy storage is migrated in place without losing resume content',async({page})=>{
- await page.evaluate(data=>{localStorage.removeItem('folio-resume-v2');localStorage.setItem('folio-resume-v1',JSON.stringify(data));},legacyInitial);await page.reload();await expect(block(page).getByRole('textbox',{name:'Block title',exact:true})).toHaveText('Senior Product Designer');
+ await page.evaluate(data=>{localStorage.removeItem('folio-resumes-v1');localStorage.removeItem('folio-resume-v2');localStorage.setItem('folio-resume-v1',JSON.stringify(data));},legacyInitial);await page.reload();await expect(block(page).getByRole('textbox',{name:'Block title',exact:true})).toHaveText('Senior Product Designer');
  await canvas(page).getByRole('textbox',{name:'Full name',exact:true}).fill('Migrated name');const saved=await state(page);expect(saved.schemaVersion).toBe(2);expect(saved.sections[1].blocks[0].bullets).toEqual(legacyInitial.sections[1].entries[0].bullets);expect(saved.sections[3].blocks[0].style.bulletStyle).toBe('none');
 });
 
@@ -136,7 +210,7 @@ test('long resumes show separate printable pages with all bullet content',async(
  const fixture=process.env.RESUME_FIXTURE;
  const resume=fixture?JSON.parse(readFileSync(fixture,'utf8')):structuredClone(initial);
  if(!fixture){resume.sections[1].blocks[0].bullets=Array.from({length:90},(_,i)=>`Achievement ${i+1}: designed and delivered reliable software for teams and customers across multiple products.`);}
- await page.evaluate(data=>localStorage.setItem('folio-resume-v2',JSON.stringify(data)),resume);
+ await page.evaluate(data=>{localStorage.removeItem('folio-resumes-v1');localStorage.setItem('folio-resume-v2',JSON.stringify(data));},resume);
  await page.reload();
  const pages=canvas(page).locator('.resume-page');
  const count=await pages.count();
@@ -164,7 +238,7 @@ test('an oversized paragraph continues on later sheets without losing text',asyn
  const resume=structuredClone(initial),target=resume.sections[1].blocks[0];
  target.bullets=[];
  target.paragraph=Array.from({length:110},(_,i)=>`Paragraph ${i+1} explains how a product improved reliability for its customers and made work easier for the engineering team. `).join('');
- await page.evaluate(data=>localStorage.setItem('folio-resume-v2',JSON.stringify(data)),resume);
+ await page.evaluate(data=>{localStorage.removeItem('folio-resumes-v1');localStorage.setItem('folio-resume-v2',JSON.stringify(data));},resume);
  await page.reload();
  const fragments=canvas(page).locator(`[data-block="${target.id}"] .block-paragraph`);
  expect(await fragments.count()).toBeGreaterThan(1);
@@ -179,7 +253,7 @@ test('one oversized bullet continues without clipping or losing text',async({pag
  const resume=structuredClone(initial),target=resume.sections[1].blocks[0];
  target.paragraph='';
  target.bullets=[Array.from({length:100},(_,i)=>`Impact ${i+1} improved reliability and delivery for the product team and its customers. `).join('')];
- await page.evaluate(data=>localStorage.setItem('folio-resume-v2',JSON.stringify(data)),resume);
+ await page.evaluate(data=>{localStorage.removeItem('folio-resumes-v1');localStorage.setItem('folio-resume-v2',JSON.stringify(data));},resume);
  await page.reload();
  const fragments=canvas(page).locator(`[data-block="${target.id}"] .bullet-text`);
  expect(await fragments.count()).toBeGreaterThan(1);

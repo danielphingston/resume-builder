@@ -1,19 +1,96 @@
 import {initial,validateResume,validateLibrary,validatePhoto,createBlock,createSection,duplicateBlock,moveBlock,moveSection} from './model.mjs';
-import {contentPanel,designPanel,checkPanel,resumeHtml,libraryHtml} from './view.mjs';
+import {contentPanel,designPanel,checkPanel,resumeHtml,libraryHtml,esc} from './view.mjs';
 import {paginate} from './paginate.mjs';
+import {blankResume,loadResumes,saveActiveResume,addResume,switchResume,renameResume,linkDriveFile} from './resume-store.mjs';
+import {DRIVE_SCOPE,listDriveResumes,readDriveResume,saveDriveResume} from './drive.mjs';
+import {GOOGLE_CLIENT_ID} from './config.mjs';
 
 const $=s=>document.querySelector(s);
 const clone=o=>structuredClone(o);
-const STORAGE='folio-resume-v2',LIBRARY='folio-block-library-v1';
+const LIBRARY='folio-block-library-v1';
 let state=clone(initial),library=[],tab='content',selectedSection='personal',selectedBlock=null,zoom=.75,pdfPreview=false,job='',history=[],future=[],toastTimer;
 let editPath='',editTime=0,dragged=null,pendingInsert=null,pendingSave=null;
-try {const saved=localStorage.getItem(STORAGE)||localStorage.getItem('folio-resume-v1');if(saved)state=validateResume(JSON.parse(saved));}
-catch{setTimeout(()=>toast('Saved resume could not be loaded. Import a backup to recover it.'),100);}
+let resumes,driveToken='',driveTokenExpires=0,driveTokenClient=null,googleScriptPromise=null,nameMode='new';
+const driveClientId=GOOGLE_CLIENT_ID.trim();
+try {const loaded=loadResumes(localStorage);resumes=loaded.store;state=loaded.resume;}
+catch{const id=crypto.randomUUID();resumes={activeId:id,entries:[{id,title:'My resume',updatedAt:0,driveId:'',driveModifiedTime:''}]};setTimeout(()=>toast('Saved resumes could not be loaded. Import a backup to recover them.'),100);}
 try {const saved=localStorage.getItem(LIBRARY);if(saved)library=validateLibrary(JSON.parse(saved));}
 catch{setTimeout(()=>toast('The saved block library could not be loaded.'),100);}
 function toast(message){$('#toast').textContent=message;$('#toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('visible'),4000);}
-function persist(){try{localStorage.setItem(STORAGE,JSON.stringify(state));$('#save-status').textContent='● Saved on this device';}catch{$('#save-status').textContent='Not saved — download a backup';}}
+function persist(){try{saveActiveResume(localStorage,resumes,state);$('#save-status').textContent='● Saved on this device';}catch{$('#save-status').textContent='Not saved — download a backup';}}
 function persistLibrary(){try{localStorage.setItem(LIBRARY,JSON.stringify(library));return true;}catch{toast('Library could not be saved. Download a backup.');return false;}}
+let driveFiles=[];
+function driveStatus(message){$('#drive-status').textContent=message;}
+function driveReady(){return !!driveToken&&Date.now()<driveTokenExpires;}
+function updateDriveButtons(){const ready=driveReady();for(const id of ['drive-save','drive-new-copy','drive-browse'])$(`#${id}`).disabled=!ready;$('#drive-disconnect').hidden=!ready;}
+function loadGoogleScript(){
+ if(window.google?.accounts?.oauth2)return Promise.resolve();
+ if(!googleScriptPromise)googleScriptPromise=new Promise((resolve,reject)=>{
+   const script=document.createElement('script');script.src='https://accounts.google.com/gsi/client';script.async=true;
+   script.onload=resolve;script.onerror=()=>reject(new Error('Google sign-in could not load. Check your connection and try again.'));
+   document.head.append(script);
+ }).catch(error=>{googleScriptPromise=null;throw error;});
+ return googleScriptPromise;
+}
+function openDriveDialog(){
+ $('#drive-origin').textContent=location.origin;
+ $('#drive-connect').disabled=!driveClientId;
+ updateDriveButtons();
+ driveStatus(driveReady()?'Connected for this session.':driveClientId?'Loading Google sign-in…':'Google Drive sign-in has not been configured for this site yet. You can still download a JSON backup.');
+ $('#drive-dialog').showModal();
+ if(driveClientId)loadGoogleScript().then(()=>{if(!driveReady())driveStatus('Ready to connect Google Drive.');}).catch(error=>driveStatus(error.message));
+}
+function connectDrive(){
+ if(!driveClientId){driveStatus('Google Drive sign-in has not been configured for this site yet.');return;}
+ if(!window.google?.accounts?.oauth2){driveStatus('Google sign-in is still loading. Try again in a moment.');return;}
+ if(!driveTokenClient)driveTokenClient=google.accounts.oauth2.initTokenClient({
+   client_id:driveClientId,scope:DRIVE_SCOPE,callback:response=>{
+     if(response?.access_token&&google.accounts.oauth2.hasGrantedAllScopes(response,DRIVE_SCOPE)){
+       driveToken=response.access_token;driveTokenExpires=Date.now()+Math.max(0,(Number(response.expires_in)||3600)-60)*1000;
+       updateDriveButtons();driveStatus('Connected for this session. Choose Save current to Drive or Open from Drive.');
+     }else driveStatus(response?.error?'Google sign-in was not completed.':'Drive access was not granted.');
+   },
+ });
+ driveTokenClient.requestAccessToken();
+}
+function disconnectDrive(){
+ if(driveToken&&window.google?.accounts?.oauth2)google.accounts.oauth2.revoke(driveToken,()=>{});
+ driveToken='';driveTokenExpires=0;updateDriveButtons();driveStatus('Disconnected. Local resumes remain in this browser.');
+}
+function currentDriveToken(){if(!driveReady()){updateDriveButtons();throw new Error('Connect Google Drive again to continue.');}return driveToken;}
+async function saveCurrentToDrive(asNew=false){
+ const button=$('#drive-save');button.disabled=true;$('#drive-new-copy').disabled=true;
+ driveStatus('Saving resume to Google Drive…');
+ try{
+   const entry=activeResumeEntry();
+   const saved=await saveDriveResume(currentDriveToken(),asNew?{...entry,driveId:'',driveModifiedTime:''}:entry,state,library);
+   linkDriveFile(localStorage,resumes,entry.id,saved.id,saved.modifiedTime||'');
+   renderResumesList();driveStatus(`Saved ${entry.title} to Google Drive.`);
+ }catch(error){driveStatus(error.message||'Could not save to Google Drive.');}
+ finally{updateDriveButtons();}
+}
+async function browseDrive(){
+ $('#drive-browse').disabled=true;driveStatus('Finding resumes in Google Drive…');
+ try{
+   driveFiles=await listDriveResumes(currentDriveToken());
+   $('#drive-files').innerHTML=driveFiles.length?driveFiles.map(f=>`<div class="drive-file-row"><div><strong>${esc(f.name)}</strong><small>${f.modifiedTime?new Date(f.modifiedTime).toLocaleString():''}</small></div><button type="button" class="button outline" data-open-drive="${esc(f.id)}">Open</button></div>`).join(''):'<p>No resumes saved by this app were found in Drive.</p>';
+   driveStatus(`${driveFiles.length} ${driveFiles.length===1?'resume':'resumes'} found in Google Drive.`);
+ }catch(error){driveStatus(error.message||'Could not list Drive resumes.');}
+ finally{updateDriveButtons();}
+}
+async function openDriveFile(id){
+ const file=driveFiles.find(f=>f.id===id);if(!file)return;
+ driveStatus(`Opening ${file.name}…`);
+ try{
+   const data=await readDriveResume(currentDriveToken(),id),incoming=validateResume(data);
+   const existing=resumes.entries.some(e=>e.driveId===id);
+   const title=file.name.replace(/\.folio\.json$/i,'')+(existing?' (Drive copy)':'');
+   const entry=addResume(localStorage,resumes,incoming,title);
+   if(!existing)linkDriveFile(localStorage,resumes,entry.id,id,file.modifiedTime||'');
+   if(!library.length&&Array.isArray(data.blockLibrary)){try{library=validateLibrary(data.blockLibrary);persistLibrary();}catch{}}
+   activateResume(incoming);$('#drive-dialog').close();toast('Resume opened from Google Drive as a separate local resume.');
+ }catch(error){driveStatus(error.message||'Could not open this Drive resume.');}
+}
 function snapshot(){history.push(clone(state));if(history.length>80)history.shift();future=[];}
 function commit(change){snapshot();editPath='';change();persist();render();}
 function updateUndo(){$('#undo').disabled=!history.length;$('#redo').disabled=!future.length;}
@@ -30,7 +107,13 @@ function renderPreview(){const d=state.design,p=$('#resume');
  let printStyle=$('#print-size');if(!printStyle){printStyle=document.createElement('style');printStyle.id='print-size';document.head.append(printStyle);}printStyle.textContent=`@page {size:${d.paper==='a4'?'A4':'letter'};margin:0;}`;
  applyZoom();
 }
-function render(){normalizeSelection();renderEditor();renderPreview();updateUndo();}
+function activeResumeEntry(){return resumes.entries.find(e=>e.id===resumes.activeId);}
+function renderResumesList(){
+ $('#current-resume-title').textContent=activeResumeEntry()?.title||'My resume';
+ $('#resume-list').innerHTML=resumes.entries.map(e=>`<div class="resume-list-row ${e.id===resumes.activeId?'active':''}"><div><strong>${esc(e.title)}</strong><small>${e.driveId?'Saved to Drive · ':''}${e.updatedAt?new Date(e.updatedAt).toLocaleDateString():''}</small></div>${e.id===resumes.activeId?'<span class="current-badge">Current</span>':`<button type="button" class="button outline" data-switch-resume="${esc(e.id)}">Open</button>`}</div>`).join('');
+}
+function render(){normalizeSelection();renderEditor();renderPreview();renderResumesList();updateUndo();}
+function activateResume(resume){state=resume;history=[];future=[];editPath='';selectedSection='personal';selectedBlock=null;job='';tab='content';document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab==='content'));render();$('#save-status').textContent='● Saved on this device';}
 function applyZoom(){const p=$('#resume');p.style.transform=`scale(${zoom})`;$('#paper-wrapper').style.width=`${(state.design.paper==='letter'?816:794)*zoom}px`;$('#paper-wrapper').style.height=`${p.offsetHeight*zoom}px`;$('#zoom-value').textContent=`${Math.round(zoom*100)}%`;}
 function fit(){zoom=Math.min(.95,Math.max(.25,($('#preview-scroll').clientWidth-64)/(state.design.paper==='letter'?816:794)));applyZoom();}
 function switchTab(next){tab=next;document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));renderEditor();}
@@ -91,6 +174,29 @@ document.addEventListener('click',event=>{
  if(d.addParagraph){selectBlock(d.addParagraph);const found=blockLocation(d.addParagraph);focusEdit(`sections.${state.sections.indexOf(found.section)}.blocks.${found.index}.paragraph`,true);}
  if(b.id==='undo')undo();
  if(b.id==='redo')redo();
+ if(b.id==='resumes'){renderResumesList();$('#resumes-dialog').showModal();}
+ if(d.closeDialog)$('#'+d.closeDialog).close();
+ if(d.switchResume){
+   try{saveActiveResume(localStorage,resumes,state);const incoming=switchResume(localStorage,resumes,d.switchResume);activateResume(incoming);$('#resumes-dialog').close();}
+   catch(error){toast(error.message||'Could not switch resumes.');}
+ }
+ if(b.id==='new-resume'||b.id==='rename-resume'){
+   nameMode=b.id==='new-resume'?'new':'rename';
+   $('#resume-name-heading').textContent=nameMode==='new'?'New resume':'Rename resume';
+   $('#resume-name-input').value=nameMode==='new'?`Resume ${resumes.entries.length+1}`:activeResumeEntry()?.title||'';
+   $('#resumes-dialog').close();$('#resume-name-dialog').showModal();$('#resume-name-input').select();
+ }
+ if(b.id==='duplicate-resume'){
+   try{const incoming=clone(state),title=`${activeResumeEntry()?.title||'Resume'} copy`;addResume(localStorage,resumes,incoming,title);activateResume(incoming);$('#resumes-dialog').close();toast('Resume duplicated. Changes to this copy save separately.');}
+   catch(error){toast(error.message||'Could not duplicate resume.');}
+ }
+ if(b.id==='drive')openDriveDialog();
+ if(b.id==='drive-connect')connectDrive();
+ if(b.id==='drive-disconnect')disconnectDrive();
+ if(b.id==='drive-save')saveCurrentToDrive();
+ if(b.id==='drive-new-copy')saveCurrentToDrive(true);
+ if(b.id==='drive-browse')browseDrive();
+ if(d.openDrive)openDriveFile(d.openDrive);
  if(b.id==='backup'){const blob=new Blob([JSON.stringify({...state,blockLibrary:library},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`${state.name.trim().replace(/[^a-z0-9]+/gi,'-')||'my'}-resume.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Resume and saved blocks backed up.');}
  if(b.id==='import')$('#import-file').click();
  if(b.id==='choose-photo'||d.uploadPhoto!==undefined)$('#photo-file').click();
@@ -110,6 +216,14 @@ document.addEventListener('click',event=>{
  }
  if(b.id==='match-job'){job=$('#job-description').value;renderEditor();}
  if(clickedAway&&b.id!=='toggle-pdf-view')clearSelection();
+});
+$('#resume-name-form').addEventListener('submit',event=>{
+ event.preventDefault();const title=$('#resume-name-input').value.trim();
+ try{
+   if(nameMode==='new'){const incoming=blankResume();addResume(localStorage,resumes,incoming,title);activateResume(incoming);toast('New resume created.');}
+   else{renameResume(localStorage,resumes,resumes.activeId,title);renderResumesList();toast('Resume renamed.');}
+   $('#resume-name-dialog').close();
+ }catch(error){toast(error.message||'Could not save resume title.');}
 });
 $('#save-preset-form').addEventListener('submit',e=>{e.preventDefault();const name=$('#preset-name').value.trim();if(!name)return;if(library.length>=50){toast('Your library holds up to 50 presets. Remove one to save another.');return;}library.push({id:crypto.randomUUID(),name,block:pendingSave});const saved=persistLibrary();$('#save-dialog').close();if(saved)toast('Block saved to your library.');});
 $('#save-dialog [data-close]').addEventListener('click',()=>$('#save-dialog').close());
