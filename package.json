@@ -6,7 +6,7 @@
     "dev": "python3 -m http.server 5173",
     "start": "python3 -m http.server 5173",
     "test": "npm run test:unit && npm run test:ui",
-    "test:unit": "node --test src/model.test.mjs",
+    "test:unit": "node --test src/*.test.mjs",
     "test:ui": "playwright test",
     "test:ui:update": "playwright test --update-snapshots"
   },
