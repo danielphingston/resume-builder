@@ -1,4 +1,4 @@
-import {initial,validateResume,validateLibrary,createBlock,createSection,duplicateBlock,moveBlock,moveSection} from './model.mjs';
+import {initial,validateResume,validateLibrary,validatePhoto,createBlock,createSection,duplicateBlock,moveBlock,moveSection} from './model.mjs';
 import {contentPanel,designPanel,checkPanel,resumeHtml,libraryHtml} from './view.mjs';
 
 const $=s=>document.querySelector(s);
@@ -25,7 +25,7 @@ function normalizeSelection(){if(selectedBlock){const found=blockLocation(select
 function renderEditor(){normalizeSelection();$('#editor-content').innerHTML=tab==='content'?contentPanel(state,selectedSection,selectedBlock):tab==='design'?designPanel(state):checkPanel(state,job);}
 function renderPreview(){const d=state.design,p=$('#resume');
  p.className=`resume-paper ${d.template} bg-${d.background} font-${d.font} headings-${d.headingStyle} default-bullets-${d.bulletStyle} icons-${d.icons}`;
- p.style.cssText=`--accent:${d.accent};--subtitle:${d.subtitleColor};--text:${d.textColor};--resume-size:${d.size}pt;--margin:${d.margin}px;--spacing:${d.spacing}px;--leading:${d.lineHeight};--ratio:${d.ratio}%;width:${d.paper==='letter'?816:794}px;min-height:${d.paper==='letter'?1056:1123}px`;
+ p.style.cssText=`--accent:${d.accent};--subtitle:${d.subtitleColor};--text:${d.textColor};--resume-size:${d.size}pt;--margin:${d.margin}px;--spacing:${d.spacing}px;--leading:${d.lineHeight};--ratio:${d.ratio}%;--photo-size:${d.photoSize}px;--photo-position:center ${d.photoPosition==='center'?'center':d.photoPosition};width:${d.paper==='letter'?816:794}px;min-height:${d.paper==='letter'?1056:1123}px`;
  p.innerHTML=resumeHtml(state,selectedSection,selectedBlock);$('#paper-label').textContent=d.paper==='a4'?'A4':'LETTER';
  let printStyle=$('#print-size');if(!printStyle){printStyle=document.createElement('style');printStyle.id='print-size';document.head.append(printStyle);}printStyle.textContent=`@page {size:${d.paper==='a4'?'A4':'letter'};margin:10mm;}`;
  applyZoom();
@@ -78,6 +78,8 @@ document.addEventListener('click',event=>{
  if(b.id==='redo')redo();
  if(b.id==='backup'){const blob=new Blob([JSON.stringify({...state,blockLibrary:library},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`${state.name.trim().replace(/[^a-z0-9]+/gi,'-')||'my'}-resume.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Resume and saved blocks backed up.');}
  if(b.id==='import')$('#import-file').click();
+ if(b.id==='choose-photo'||d.uploadPhoto!==undefined)$('#photo-file').click();
+ if(b.id==='remove-photo')commit(()=>state.photo='');
  if(b.id==='export'){document.activeElement?.blur();window.print();}
  if(b.id==='zoom-in'){zoom=Math.min(1.25,zoom+.1);applyZoom();}
  if(b.id==='zoom-out'){zoom=Math.max(.25,zoom-.1);applyZoom();}
@@ -115,6 +117,25 @@ document.addEventListener('keydown',e=>{
  if(e.key==='Backspace'&&!el.textContent&&el.dataset.edit.includes('.bullets.')){e.preventDefault();const [,si,bi,li]=el.dataset.edit.match(/^sections\.(\d+)\.blocks\.(\d+)\.bullets\.(\d+)$/).map(Number);const block=state.sections[si].blocks[bi];removeBullet(block.id,li);focusEdit(`sections.${si}.blocks.${bi}.${li>0?`bullets.${li-1}`:'paragraph'}`,true);}
 });
 $('#import-file').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>2e6)throw new Error('Please use a backup smaller than 2 MB.');const data=JSON.parse(await file.text()),incoming=validateResume(data),incomingLibrary=data.blockLibrary===undefined?null:validateLibrary(data.blockLibrary);commit(()=>{state=incoming;selectedBlock=null;});if(incomingLibrary){library=incomingLibrary;persistLibrary();}toast('Resume imported. Undo is available for resume changes.');}catch(err){toast(err.message||'Could not import this file.');}e.target.value='';});
+$('#photo-file').addEventListener('change',async e=>{
+ const file=e.target.files[0];if(!file)return;
+ try{
+   if(!['image/jpeg','image/png','image/webp'].includes(file.type))throw new Error('Choose a JPG, PNG, or WebP photo.');
+   if(file.size>10_000_000)throw new Error('Choose a photo smaller than 10 MB.');
+   const bitmap=await createImageBitmap(file);
+   try{
+     if(bitmap.width*bitmap.height>80_000_000)throw new Error('This photo is too large to process.');
+     const scale=Math.min(1,720/Math.max(bitmap.width,bitmap.height));
+     const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+     const ctx=canvas.getContext('2d');if(!ctx)throw new Error('Could not process this photo.');
+     ctx.fillStyle='#ffffff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(bitmap,0,0,canvas.width,canvas.height);
+     const photo=validatePhoto(canvas.toDataURL('image/jpeg',.82));
+     commit(()=>{state.photo=photo;selectedSection='personal';selectedBlock=null;});
+     toast('Photo added to Editorial and Modern layouts.');
+   }finally{bitmap.close();}
+ }catch(err){toast(err.message==='The source image could not be decoded.'?'This image could not be opened.':err.message||'Could not add this photo.');}
+ e.target.value='';
+});
 
 function clearDrag(){dragged=null;document.querySelectorAll('.drop-before,.drop-after,.drop-inside,.dragging').forEach(el=>el.classList.remove('drop-before','drop-after','drop-inside','dragging'));document.body.classList.remove('is-dragging');}
 function startDrag(handle){dragged=handle.dataset.dragBlock?{type:'block',id:handle.dataset.dragBlock}:{type:'section',id:handle.dataset.dragSection};handle.closest(dragged.type==='block'?'[data-block]':'[data-section]')?.classList.add('dragging');document.body.classList.add('is-dragging');}

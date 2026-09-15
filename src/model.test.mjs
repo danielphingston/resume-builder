@@ -1,12 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {initial,validateResume,validateLibrary,checkResume,createBlock,createSection,duplicateBlock,moveBlock,moveSection,fonts,bulletStyles} from './model.mjs';
+import {initial,validateResume,validatePhoto,supportsPhoto,validateLibrary,checkResume,createBlock,createSection,duplicateBlock,moveBlock,moveSection,fonts,bulletStyles} from './model.mjs';
 import {legacyInitial} from '../tests/legacy-fixture.mjs';
 const fresh=()=>structuredClone(initial);
 
 test('v2 backups round-trip without losing mixed content or styling',()=>{
  const data=fresh(),block=createBlock('project');block.style.titleColor='#990000';block.style.subtitleColor='#ff7700';block.style.bulletStyle='square';data.sections[0].blocks.push(block);
  assert.deepEqual(validateResume(JSON.parse(JSON.stringify(data))),data);
+});
+test('photo survives backups and older resumes get an empty photo field',()=>{
+ const data=fresh();data.photo='data:image/png;base64,iVBORw0KGgo=';data.design.photoShape='circle';data.design.photoPosition='top';data.design.photoSize=118;
+ assert.deepEqual(validateResume(JSON.parse(JSON.stringify(data))),data);
+ assert.equal(validateResume(legacyInitial).photo,'');
+ assert.equal(supportsPhoto('modern'),true);assert.equal(supportsPhoto('editorial'),true);assert.equal(supportsPhoto('classic'),false);
+});
+test('photo import accepts raster data and rejects remote, vector and oversized images',()=>{
+ assert.equal(validatePhoto('data:image/jpeg;base64,AAAA'),'data:image/jpeg;base64,AAAA');
+ assert.throws(()=>validatePhoto('https://example.com/photo.jpg'));
+ assert.throws(()=>validatePhoto('data:image/svg+xml;base64,PHN2Zz4='));
+ assert.throws(()=>validatePhoto('data:image/png;base64,'+'A'.repeat(1_500_000)));
+ const bad=fresh();bad.photo='javascript:alert(1)';assert.throws(()=>validateResume(bad));
+});
+test('photo layout settings are bounded and invalid choices reset',()=>{
+ const data=fresh();Object.assign(data.design,{photoShape:'script',photoPosition:'url()',photoSize:900});const d=validateResume(data).design;
+ assert.equal(d.photoShape,'auto');assert.equal(d.photoPosition,'center');assert.equal(d.photoSize,128);
 });
 test('legacy resumes migrate all paragraphs, lists, and experience entries',()=>{
  const data=validateResume(legacyInitial);assert.equal(data.schemaVersion,2);assert.equal(data.sections[0].blocks[0].paragraph,legacyInitial.sections[0].text);

@@ -7,6 +7,17 @@ const openDesign=page=>page.locator('.panel-tabs [data-tab="design"]').click();
 const openContent=page=>page.locator('.panel-tabs [data-tab="content"]').click();
 async function selectBlock(page){await block(page).getByRole('textbox',{name:'Block title',exact:true}).click();}
 async function setColor(page,label,value){await page.getByLabel(label,{exact:true}).evaluate((el,v)=>{el.value=v;el.dispatchEvent(new Event('input',{bubbles:true}));},value);}
+async function uploadPortrait(page){
+ const png=await page.evaluate(()=>{
+   const c=document.createElement('canvas');c.width=180;c.height=240;const x=c.getContext('2d');
+   x.fillStyle='#d3dfd0';x.fillRect(0,0,180,240);x.fillStyle='#273f47';x.fillRect(0,170,180,70);
+   x.fillStyle='#ae724d';x.beginPath();x.ellipse(90,98,46,58,0,0,Math.PI*2);x.fill();
+   x.fillStyle='#26313b';x.beginPath();x.ellipse(90,57,50,23,0,Math.PI,2*Math.PI);x.fill();
+   return c.toDataURL('image/png').split(',')[1];
+ });
+ await page.locator('#photo-file').setInputFiles({name:'portrait.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
+ await expect(canvas(page).locator('.resume-photo')).toHaveCount(1);
+}
 
 test.beforeEach(async({page})=>{await page.goto('/');await expect(canvas(page).getByRole('textbox',{name:'Full name',exact:true})).toHaveText('Jordan Davis');});
 
@@ -98,3 +109,41 @@ test('mobile editor has no horizontal page overflow and matches its baseline',as
 test('design controls visual regression',async({page})=>{await openDesign(page);await page.mouse.move(0,0);await expect(page).toHaveScreenshot('design-controls.png');});
 test('block library visual regression',async({page})=>{await canvas(page).locator('[data-section="summary"]').getByRole('button',{name:'＋ Add block',exact:true}).click();await page.mouse.move(0,0);await expect(page.getByRole('dialog')).toHaveScreenshot('block-library.png');});
 test('printed resume visual regression',async({page})=>{await page.setViewportSize({width:794,height:1123});await page.emulateMedia({media:'print'});await page.mouse.move(0,0);await expect(canvas(page)).toHaveScreenshot('printed-resume.png');});
+
+test('portrait upload is local, survives reload and backup, and stays available across layouts',async({page})=>{
+ await uploadPortrait(page);
+ const photo=canvas(page).locator('.resume-photo');await expect(photo).toHaveAttribute('src',/^data:image\/jpeg;base64,/);
+ expect((await state(page)).photo).toMatch(/^data:image\/jpeg;base64,/);
+ await page.reload();await expect(photo).toBeVisible();
+ const downloadPromise=page.waitForEvent('download');await page.getByRole('button',{name:/Backup/}).click();
+ const download=await downloadPromise,stream=await download.createReadStream();let text='';for await(const chunk of stream)text+=chunk;
+ expect(JSON.parse(text).photo).toBe((await state(page)).photo);
+ await openDesign(page);await page.locator('[data-template="classic"]').click();await expect(photo).toHaveCount(0);expect((await state(page)).photo).toMatch(/^data:image\/jpeg;base64,/);
+ await page.locator('[data-template="modern"]').click();await expect(photo).toBeVisible();await expect(photo).toHaveCSS('border-radius','48px');
+ await page.locator('.panel-tabs [data-tab="content"]').click();await page.getByLabel('Photo shape',{exact:true}).selectOption('square');await page.getByLabel('Photo framing',{exact:true}).selectOption('top');
+ await expect(photo).toHaveCSS('border-radius','0px');expect((await state(page)).design.photoPosition).toBe('top');
+});
+
+test('photo removal and undo update the resume without clearing other content',async({page})=>{
+ await uploadPortrait(page);const name=await canvas(page).getByRole('textbox',{name:'Full name',exact:true}).textContent();
+ await page.locator('#remove-photo').click();await expect(canvas(page).locator('.resume-photo')).toHaveCount(0);expect((await state(page)).photo).toBe('');
+ await page.getByRole('button',{name:'Undo',exact:true}).click();await expect(canvas(page).locator('.resume-photo')).toBeVisible();
+ expect(await canvas(page).getByRole('textbox',{name:'Full name',exact:true}).textContent()).toBe(name);
+});
+
+test('unsupported photo files leave the saved resume intact',async({page})=>{
+ await page.locator('#photo-file').setInputFiles({name:'vector.svg',mimeType:'image/svg+xml',buffer:Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>')});
+ await expect(page.locator('#toast')).toContainText('JPG, PNG, or WebP');
+ expect((await state(page))?.photo||'').toBe('');await expect(canvas(page).locator('.resume-photo')).toHaveCount(0);
+});
+
+test('portrait is included in the printed resume and photo controls are hidden',async({page})=>{
+ await uploadPortrait(page);await page.emulateMedia({media:'print'});
+ await expect(canvas(page).locator('.resume-photo')).toBeVisible();await expect(canvas(page).locator('.photo-change')).toBeHidden();
+ const pdf=await page.pdf({preferCSSPageSize:true,printBackground:true});expect(pdf.byteLength).toBeGreaterThan(12000);
+});
+
+test('modern portrait visual regression',async({page})=>{
+ await page.locator('.panel-tabs [data-tab="design"]').click();await page.locator('[data-template="modern"]').click();await uploadPortrait(page);
+ await page.mouse.move(0,0);await expect(canvas(page)).toHaveScreenshot('modern-portrait.png');
+});

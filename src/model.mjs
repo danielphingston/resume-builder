@@ -3,7 +3,7 @@ import {legacyInitial} from './sample.mjs';
 export const fonts = [['sans','System sans'],['arial','Arial'],['verdana','Verdana'],['trebuchet','Trebuchet'],['serif','Georgia'],['times','Times New Roman'],['mono','Courier New']];
 export const bulletStyles = [['disc','• Solid dot'],['circle','○ Circle'],['square','▪ Square'],['dash','– Dash'],['arrow','› Arrow'],['check','✓ Checkmark'],['decimal','1. Numbered'],['none','No marker']];
 export const blockIcons = [['none','No icon'],['briefcase','Briefcase'],['code','Code'],['book','Education'],['star','Star'],['award','Award'],['heart','Heart'],['globe','Globe']];
-export const defaultDesign = {...legacyInitial.design, subtitleColor:'#205c52', textColor:'#404743', bulletStyle:'disc', headingStyle:'plain'};
+export const defaultDesign = {...legacyInitial.design, subtitleColor:'#205c52', textColor:'#404743', bulletStyle:'disc', headingStyle:'plain', photoShape:'auto', photoPosition:'center', photoSize:96};
 export const defaultStyle = {font:'inherit',titleColor:'',subtitleColor:'',textColor:'',background:'',bulletStyle:'inherit',border:'none'};
 const hex = /^#[0-9a-f]{6}$/i;
 const enumValue=(value,options,fallback)=>options.includes(value)?value:fallback;
@@ -12,6 +12,12 @@ const id=()=>crypto.randomUUID();
 const isObject=value=>!!value && typeof value==='object' && !Array.isArray(value);
 const string=(value,fallback='')=>{if(value===undefined)return fallback;if(typeof value!=='string'||value.length>20000)throw new Error('Invalid text in resume.');return value;};
 const strings=value=>{if(!Array.isArray(value)||value.length>200||value.some(v=>typeof v!=='string'||v.length>20000))throw new Error('Invalid bullet list.');return [...value];};
+export function supportsPhoto(template){return template==='editorial'||template==='modern';}
+export function validatePhoto(value=''){
+  if(value===undefined||value==='')return '';
+  if(typeof value!=='string'||value.length>1_500_000||!/^data:image\/(?:jpeg|png|webp);base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/i.test(value))throw new Error('Invalid resume photo.');
+  return value;
+}
 export function normalizeStyle(style={}) {
   if(!isObject(style))throw new Error('Invalid block style.');
   return {font:enumValue(style.font,['inherit',...fonts.map(([v])=>v)],'inherit'),
@@ -36,6 +42,7 @@ export function validateResume(data) {
   if(data.schemaVersion!==undefined&&![1,2].includes(data.schemaVersion))throw new Error('Unsupported resume version.');
   const result={schemaVersion:2};
   for(const key of ['name','role','email','phone','location','website']){if(typeof data[key]!=='string')throw new Error('Invalid personal details.');result[key]=string(data[key]);}
+  result.photo=validatePhoto(data.photo);
   const sectionIds=new Set(),blockIds=new Set();
   result.sections=data.sections.map((raw,index)=>{
     const s=migrateSection(raw,index);
@@ -49,8 +56,8 @@ export function validateResume(data) {
   if(data.design!==undefined&&!isObject(data.design))throw new Error('Invalid resume design.');
   const input={...defaultDesign,...data.design};
   const d={...defaultDesign};
-  for(const [key,min,max] of [['size',8,13],['margin',20,64],['spacing',8,36],['lineHeight',1.2,1.9],['ratio',50,75]])d[key]=bound(input[key],min,max,defaultDesign[key]);
-  for(const [key,values] of Object.entries({template:['editorial','classic','modern'],font:fonts.map(([v])=>v),background:['clean','tinted','sidebar'],icons:['minimal','none','classic'],paper:['a4','letter'],bulletStyle:bulletStyles.map(([v])=>v),headingStyle:['plain','line','band']}))d[key]=enumValue(input[key],values,defaultDesign[key]);
+  for(const [key,min,max] of [['size',8,13],['margin',20,64],['spacing',8,36],['lineHeight',1.2,1.9],['ratio',50,75],['photoSize',72,128]])d[key]=bound(input[key],min,max,defaultDesign[key]);
+  for(const [key,values] of Object.entries({template:['editorial','classic','modern'],font:fonts.map(([v])=>v),background:['clean','tinted','sidebar'],icons:['minimal','none','classic'],paper:['a4','letter'],bulletStyle:bulletStyles.map(([v])=>v),headingStyle:['plain','line','band'],photoShape:['auto','circle','rounded','square'],photoPosition:['center','top','bottom']}))d[key]=enumValue(input[key],values,defaultDesign[key]);
   for(const key of ['accent','subtitleColor','textColor'])d[key]=hex.test(input[key])?input[key]:defaultDesign[key];
   d.columns=Number(input.columns)===1?1:2;
   result.design=d;
