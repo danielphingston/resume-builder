@@ -110,8 +110,14 @@ export function paginate(root, html, design, selectedSection, selectedBlock) {
             part.querySelector('.section-blocks').append(piece);
           }
           if (fits(piece, pages[pageIndex])) break;
-          // Move trailing bullets first, then divide a long paragraph if needed.
+          // Move trailing bullets first, then divide an oversized first bullet or paragraph.
           const list = piece.querySelector(':scope > .block-bullets');
+          const moved = [];
+          while (list?.children.length > 1 && !fits(piece, pages[pageIndex])) {
+            const item = list.lastElementChild;
+            item.remove();
+            moved.unshift(item);
+          }
           const loneBullet = list?.children.length === 1 ? list.firstElementChild.querySelector('.bullet-text') : null;
           if (loneBullet && !piece.querySelector(':scope > .block-paragraph')?.textContent) {
             const text = loneBullet.textContent;
@@ -132,7 +138,7 @@ export function paginate(root, html, design, selectedSection, selectedBlock) {
               const suffix = li.querySelector('.bullet-text');
               suffix.textContent = text.slice(cut);
               readOnlyFragment(suffix);
-              next.querySelector('.block-bullets').append(li);
+              next.querySelector('.block-bullets').append(li, ...moved);
               part = fragment(section, true);
               columnAt(++pageIndex, stream.name).append(part);
               piece = next;
@@ -140,7 +146,6 @@ export function paginate(root, html, design, selectedSection, selectedBlock) {
             }
             loneBullet.textContent = text;
           }
-          const moved = [];
           while (list?.children.length && !fits(piece, pages[pageIndex])) {
             const item = list.lastElementChild;
             item.remove();

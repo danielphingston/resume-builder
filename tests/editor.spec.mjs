@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 import {legacyInitial} from './legacy-fixture.mjs';
-import {initial} from '../src/model.mjs';
+import {initial,quickStyles} from '../src/model.mjs';
 import {readFileSync,writeFileSync} from 'node:fs';
 const canvas=page=>page.locator('#resume');
 const block=page=>canvas(page).locator('[data-block]').nth(1);
@@ -49,8 +49,107 @@ test('clicking blank preview space clears the selected section and block',async(
  await expect(canvas(page).locator('.section-selected')).toHaveCount(0);
  await expect(page.locator('.inspector')).toHaveCount(0);
  await selectBlock(page);
- await page.getByRole('button',{name:'Zoom in'}).click();
+ await page.locator('.preview-toolbar').click({position:{x:10,y:10}});
  await expect(canvas(page).locator('.resume-block.selected')).toHaveCount(0);
+});
+
+test('preview uses native page dimensions without zoom controls',async({page})=>{
+ await expect(page.locator('#zoom-in,#zoom-out,#fit,#zoom-value')).toHaveCount(0);
+ await expect(canvas(page)).toHaveCSS('transform','none');
+ await expect(canvas(page).locator('.resume-page').first()).toHaveCSS('width','794px');
+ await page.setViewportSize({width:390,height:844});
+ await expect(canvas(page).locator('.resume-page').first()).toHaveCSS('width','794px');
+ await expect(page.locator('.preview-scroll-hint')).toBeVisible();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+ expect(await page.locator('#preview-scroll').evaluate(el=>el.scrollWidth>el.clientWidth)).toBe(true);
+});
+
+test('design dropdowns and resume-check text stay focused when clicked',async({page})=>{
+ await openDesign(page);
+ const font=page.getByLabel('Typography',{exact:true});
+ const original=await font.elementHandle();
+ await font.click();
+ expect(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label'))).toBe('Typography');
+ expect(await original.evaluate(el=>el.isConnected&&document.activeElement===el)).toBe(true);
+ await font.selectOption('verdana');
+ await expect(font).toHaveValue('verdana');
+ await page.locator('.panel-tabs [data-tab="check"]').click();
+ const job=page.getByPlaceholder('What is your next team looking for?');
+ await job.click();
+ await expect(job).toBeFocused();
+ await job.pressSequentially('Design systems and accessibility');
+ await expect(job).toHaveValue('Design systems and accessibility');
+});
+
+test('backup import is available from the main toolbar on every tab',async({page})=>{
+ const button=page.locator('.topbar #import');
+ await expect(button).toBeVisible();
+ await openDesign(page);
+ await expect(button).toBeVisible();
+ await page.locator('.panel-tabs [data-tab="check"]').click();
+ await expect(button).toBeVisible();
+ await expect(page.locator('#editor-content #import')).toHaveCount(0);
+ const chooserPromise=page.waitForEvent('filechooser');
+ await button.click();
+ const chooser=await chooserPromise;
+ expect(chooser.isMultiple()).toBe(false);
+});
+
+test('quick styles apply distinct designs and persist across reloads',async({page})=>{
+ await openDesign(page);
+ await expect(page.locator('[data-style-preset]')).toHaveCount(quickStyles.length);
+ for(const style of quickStyles){
+   const button=page.locator(`[data-style-preset="${style.id}"]`);
+   await button.click();
+   await expect(button).toHaveAttribute('aria-pressed','true');
+   const saved=await state(page);
+   for(const [key,value] of Object.entries(style.design))expect(saved.design[key]).toBe(value);
+   await expect(canvas(page).locator('.resume-page').first()).toHaveClass(new RegExp(`font-${style.design.font}`));
+   await expect(canvas(page).locator('.resume-page').first()).toHaveClass(new RegExp(`headings-${style.design.headingStyle}`));
+ }
+ await page.reload();
+ const last=quickStyles.at(-1);
+ for(const [key,value] of Object.entries(last.design))expect((await state(page)).design[key]).toBe(value);
+});
+
+test('editing near a page edge extends the current sheet and restores it without changes',async({page})=>{
+ const resume=structuredClone(initial);
+ const side=resume.sections.find(s=>s.column==='side');
+ const target=side.blocks[0];
+ target.title='';target.subtitle='';target.date='';target.location='';target.paragraph='';
+ target.bullets=Array.from({length:45},(_,i)=>`Skill ${i+1} with reliable delivery and careful design`);
+ await page.evaluate(data=>{localStorage.removeItem('folio-resumes-v1');localStorage.setItem('folio-resume-v2',JSON.stringify(data));},resume);
+ await page.reload();
+ const first=canvas(page).locator(`[data-block="${target.id}"] .bullet-text`).first();
+ const before=await first.evaluate(el=>({page:el.closest('.resume-page').dataset.page,height:el.closest('.resume-page').offsetHeight}));
+ const count=await canvas(page).locator('.resume-page').count();
+ await first.click();
+ await expect(canvas(page).locator(`[data-block="${target.id}"].selected`).first()).toBeVisible();
+ const during=await first.evaluate(el=>({page:el.closest('.resume-page').dataset.page,height:el.closest('.resume-page').offsetHeight}));
+ expect(during.page).toBe(before.page);
+ expect(during.height).toBeGreaterThan(before.height);
+ expect(await canvas(page).locator('.resume-page').count()).toBe(count);
+ const actual=await canvas(page).locator(`[data-block="${target.id}"] .bullet-text`).allTextContents();
+ expect(actual.filter(Boolean)).toEqual(target.bullets);
+ const overflows=await canvas(page).locator('.resume-page').evaluateAll(sheets=>sheets.flatMap((sheet,index)=>{
+   const bottom=sheet.getBoundingClientRect().bottom;
+   return [...sheet.querySelectorAll('.block-bullets li')].filter(li=>li.getBoundingClientRect().bottom>bottom-10).map(li=>({page:index+1,text:li.textContent.slice(0,30)}));
+ }));
+ expect(overflows).toEqual([]);
+ await page.locator('#preview-scroll').click({position:{x:8,y:8}});
+ const after=await first.evaluate(el=>({page:el.closest('.resume-page').dataset.page,height:el.closest('.resume-page').offsetHeight}));
+ expect(after).toEqual(before);
+ expect(await canvas(page).locator('.resume-page').count()).toBe(count);
+ await first.click();
+ const edited='Built reliable systems and improved delivery for customers across multiple teams. '.repeat(35);
+ await first.fill(edited);
+ await expect(first).toHaveText(edited);
+ expect(await first.evaluate(el=>el.closest('.resume-page').dataset.page)).toBe(before.page);
+ await page.locator('#preview-scroll').click({position:{x:8,y:8}});
+ const printedText=(await canvas(page).locator(`[data-block="${target.id}"] .bullet-text`).allTextContents()).join('');
+ expect(printedText).toBe([edited,...target.bullets.slice(1)].join(''));
+ const clipped=await canvas(page).locator('.resume-page').evaluateAll(sheets=>sheets.flatMap((sheet,index)=>[...sheet.querySelectorAll('.block-bullets li')].filter(li=>li.getBoundingClientRect().bottom>sheet.getBoundingClientRect().bottom-10).map(()=>index+1)));
+ expect(clipped).toEqual([]);
 });
 
 test('PDF view shows clean sheets and can return to editing',async({page})=>{
@@ -101,8 +200,10 @@ test('unconfigured Google Drive asks no visitor for OAuth credentials',async({pa
  await page.reload();
  await page.getByRole('button',{name:'Google Drive',exact:true}).click();
  await expect(page.getByRole('button',{name:'Connect Google Drive'})).toBeDisabled();
- await expect(page.locator('#drive-status')).toContainText('not been configured');
+ await expect(page.locator('#drive-status')).toContainText('unavailable');
  await expect(page.locator('#drive-dialog input')).toHaveCount(0);
+ await expect(page.locator('#drive-origin')).toHaveCount(0);
+ await expect(page.locator('#drive-dialog')).not.toContainText('localhost');
 });
 
 test('Google sign-in saves and opens a Drive resume as a separate local copy',async({page})=>{
@@ -130,6 +231,12 @@ test('Google sign-in saves and opens a Drive resume as a separate local copy',as
  await expect(page.locator('#current-resume-title')).toHaveText('Jordan Davis (Drive copy)');
  expect((await state(page)).name).toBe('From Google Drive');
  expect((await page.evaluate(()=>JSON.parse(localStorage.getItem('folio-resumes-v1')))).entries).toHaveLength(2);
+ await page.route('https://www.googleapis.com/**',route=>route.fulfill({status:403,contentType:'application/json',body:JSON.stringify({error:{message:'Permission denied for resource projects/123'}})}));
+ await page.getByRole('button',{name:'Google Drive',exact:true}).click();
+ await expect(page.locator('#drive-dialog')).not.toContainText('localhost');
+ await page.getByRole('button',{name:'Open from Drive'}).click();
+ await expect(page.locator('#drive-status')).toContainText('Connect again and try');
+ await expect(page.locator('#drive-status')).not.toContainText('projects/123');
 });
 
 test('bullet Enter splits at the caret and Backspace removes an empty bullet',async({page})=>{
