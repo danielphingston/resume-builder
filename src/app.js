@@ -143,7 +143,7 @@ function scheduleEditingPageExtension(){
    }
  });
 }
-function clearSelection(){const changed=!!selectedSection||!!selectedBlock;selectedSection=null;selectedBlock=null;renderEditor(changed);renderPreview();}
+function clearSelection(restore=null){const changed=!!selectedSection||!!selectedBlock,editor=$('#editor-content'),preview=$('#preview-scroll');const scroll=restore||{editor:editor.scrollTop,preview:preview.scrollTop,x:window.scrollX,y:window.scrollY};if(editor.contains(document.activeElement))document.activeElement.blur();selectedSection=null;selectedBlock=null;renderEditor(changed);renderPreview();const restoreScroll=()=>{if(editor.scrollTop!==scroll.editor)editor.scrollTop=scroll.editor;if(preview.scrollTop!==scroll.preview)preview.scrollTop=scroll.preview;if(window.scrollX!==scroll.x||window.scrollY!==scroll.y)window.scrollTo(scroll.x,scroll.y);};restoreScroll();requestAnimationFrame(()=>requestAnimationFrame(restoreScroll));}
 function selectBlock(id){const found=blockLocation(id);if(!found)return;const changed=selectedBlock!==id||selectedSection!==found.section.id||tab!=='content';selectedBlock=id;selectedSection=found.section.id;switchTab('content',changed);$('#editor-content').scrollTop=0;syncSelection();scheduleEditingPageExtension();}
 function selectSection(id){const changed=selectedSection!==id||!!selectedBlock||tab!=='content';selectedSection=id;selectedBlock=null;switchTab('content',changed);syncSelection();scheduleEditingPageExtension();}
 function focusEdit(path,atEnd=false){const el=[...document.querySelectorAll('[data-edit]')].find(e=>e.dataset.edit===path);if(!el)return;el.focus();const range=document.createRange();range.selectNodeContents(el);range.collapse(!atEnd);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);}
@@ -151,16 +151,18 @@ function openLibrary(sectionId=null,column='main'){pendingInsert={sectionId,colu
 function insertBlock(block){const section=state.sections.find(s=>s.id===pendingInsert?.sectionId);if(!section)return;commit(()=>{section.blocks.push(block);selectedSection=section.id;selectedBlock=block.id;});$('#section-dialog').close();}
 function moveBlockBy(id,delta){const found=blockLocation(id);if(!found)return;const {section,index}=found,target=index+delta;if(target<0||target>=section.blocks.length)return;commit(()=>{[section.blocks[index],section.blocks[target]]=[section.blocks[target],section.blocks[index]];selectedSection=section.id;selectedBlock=id;});}
 function moveSectionBy(id,delta){const index=state.sections.findIndex(s=>s.id===id),target=index+delta;if(index<0||target<0||target>=state.sections.length)return;commit(()=>{[state.sections[index],state.sections[target]]=[state.sections[target],state.sections[index]];});}
+function moveExtraLink(index,delta){const target=index+delta;if(index<0||target<0||target>=state.links.length)return;commit(()=>{[state.links[index],state.links[target]]=[state.links[target],state.links[index]];});}
 function addBullet(id,index=null,text=''){const found=blockLocation(id);if(!found)return;const at=index??found.block.bullets.length;commit(()=>{found.block.bullets.splice(at,0,text);selectedBlock=id;selectedSection=found.section.id;});const si=state.sections.indexOf(found.section);focusEdit(`sections.${si}.blocks.${found.index}.bullets.${at}`);}
 function removeBullet(id,index){const found=blockLocation(id);if(!found)return;commit(()=>found.block.bullets.splice(index,1));}
 
-let clickAway=false;
+let clickAway=false,clickAwayScroll=null;
 document.addEventListener('pointerdown',event=>{
  clickAway=!event.target.closest('#editor-content,#resume [data-block],#resume [data-section],#resume .resume-header,dialog');
+ clickAwayScroll=clickAway?{editor:$('#editor-content').scrollTop,preview:$('#preview-scroll').scrollTop,x:window.scrollX,y:window.scrollY,active:document.activeElement}:null;
 });
 
 document.addEventListener('click',event=>{
- const clickedAway=clickAway;clickAway=false;
+ const clickedAway=clickAway,restoreClickScroll=clickedAway&&clickAwayScroll&&(document.activeElement===document.body||document.activeElement===clickAwayScroll.active||document.activeElement.closest?.('#resume'))?clickAwayScroll:null;clickAway=false;clickAwayScroll=null;
  const b=event.target.closest('button');
  if(!b){
    const block=event.target.closest('#resume [data-block]');
@@ -168,7 +170,7 @@ document.addEventListener('click',event=>{
    const section=event.target.closest('#resume [data-section]');
    if(section){if(selectedSection!==section.dataset.section||selectedBlock)selectSection(section.dataset.section);return;}
    if(event.target.closest('#resume .resume-header')){if(selectedSection!=='personal'||selectedBlock)selectSection('personal');return;}
-   if(clickedAway)clearSelection();
+   if(clickedAway)clearSelection(restoreClickScroll);
    return;
  }
  const d=b.dataset;
@@ -181,6 +183,10 @@ document.addEventListener('click',event=>{
  if(d.reset)commit(()=>setPath(d.reset,''));
  if(d.stylePreset){const style=quickStyles.find(s=>s.id===d.stylePreset);if(style&&Object.entries(style.design).some(([key,value])=>state.design[key]!==value))commit(()=>Object.assign(state.design,style.design));}
  if(b.id==='add-section')openLibrary();
+ if(d.addLink!==undefined&&state.links.length<10)commit(()=>state.links.push({label:'',url:''}));
+ if(d.removeLink!==undefined){const index=Number(d.removeLink);if(Number.isInteger(index)&&index>=0&&index<state.links.length)commit(()=>state.links.splice(index,1));}
+ if(d.linkUp!==undefined)moveExtraLink(Number(d.linkUp),-1);
+ if(d.linkDown!==undefined)moveExtraLink(Number(d.linkDown),1);
  if(d.addSectionColumn)openLibrary(null,d.addSectionColumn);
  if(d.addBlock)openLibrary(d.addBlock);
  if(d.insertPreset){if(pendingInsert.sectionId)insertBlock(createBlock(d.insertPreset));else{commit(()=>{const section=createSection(d.insertPreset,pendingInsert.column);state.sections.push(section);selectedSection=section.id;selectedBlock=section.blocks[0].id;});$('#section-dialog').close();}}
@@ -237,7 +243,7 @@ document.addEventListener('click',event=>{
    clearSelection();
  }
  if(b.id==='match-job'){job=$('#job-description').value;renderEditor(true);}
- if(clickedAway&&b.id!=='toggle-pdf-view')clearSelection();
+ if(clickedAway&&!['toggle-pdf-view','backup'].includes(b.id))clearSelection();
 });
 $('#resume-name-form').addEventListener('submit',event=>{
  event.preventDefault();const title=$('#resume-name-input').value.trim();

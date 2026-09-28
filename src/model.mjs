@@ -18,6 +18,7 @@ const id=()=>crypto.randomUUID();
 const isObject=value=>!!value && typeof value==='object' && !Array.isArray(value);
 const string=(value,fallback='')=>{if(value===undefined)return fallback;if(typeof value!=='string'||value.length>20000)throw new Error('Invalid text in resume.');return value;};
 const strings=value=>{if(!Array.isArray(value)||value.length>200||value.some(v=>typeof v!=='string'||v.length>20000))throw new Error('Invalid bullet list.');return [...value];};
+const normalizeLinks=value=>{if(!Array.isArray(value)||value.length>10)throw new Error('Invalid additional links.');return value.map(link=>{if(!isObject(link))throw new Error('Invalid additional link.');return {label:string(link.label),url:string(link.url)};});};
 export function supportsPhoto(template){return template==='editorial'||template==='modern';}
 export function validatePhoto(value=''){
   if(value===undefined||value==='')return '';
@@ -37,7 +38,7 @@ export function normalizeBlock(b, fallbackId=id()) {
 function migrateSection(s,index) {
   if(!isObject(s))throw new Error('Invalid section.');
   if(Array.isArray(s.blocks))return s;
-  const base={id:s.id,title:s.title,column:s.column};
+  const base={id:s.id,title:s.title,column:s.column,blockSpacing:s.blockSpacing};
   if(s.type==='text')return {...base,blocks:[{id:`legacy-${index}-0`,paragraph:string(s.text)}]};
   if(s.type==='list')return {...base,blocks:[{id:`legacy-${index}-0`,bullets:strings(s.items),style:{bulletStyle:'none'}}]};
   if(s.type==='entries'&&Array.isArray(s.entries))return {...base,blocks:s.entries.map((e,j)=>{if(!isObject(e))throw new Error('Invalid entry.');return {...e,id:`legacy-${index}-${j}`};})};
@@ -48,13 +49,14 @@ export function validateResume(data) {
   if(data.schemaVersion!==undefined&&![1,2].includes(data.schemaVersion))throw new Error('Unsupported resume version.');
   const result={schemaVersion:2};
   for(const key of ['name','role','email','phone','location','website']){if(typeof data[key]!=='string')throw new Error('Invalid personal details.');result[key]=string(data[key]);}
+  result.links=normalizeLinks(data.links===undefined?[]:data.links);
   result.photo=validatePhoto(data.photo);
   const sectionIds=new Set(),blockIds=new Set();
   result.sections=data.sections.map((raw,index)=>{
     const s=migrateSection(raw,index);
     if(typeof s.id!=='string'||!s.id||sectionIds.has(s.id)||typeof s.title!=='string'||!['main','side'].includes(s.column)||s.blocks.length>100)throw new Error('Invalid or duplicate section.');
     sectionIds.add(s.id);
-    return {id:s.id,title:string(s.title),column:s.column,blocks:s.blocks.map((b,j)=>{
+    return {id:s.id,title:string(s.title),column:s.column,blockSpacing:bound(s.blockSpacing,0,48,18),blocks:s.blocks.map((b,j)=>{
       const block=normalizeBlock(b,`block-${index}-${j}`);
       if(!block.id||blockIds.has(block.id))throw new Error('Duplicate block identifier.');blockIds.add(block.id);return block;
     })};
@@ -81,7 +83,7 @@ export const presets = [
 ];
 export function createBlock(key='custom') {const preset=presets.find(p=>p.key===key);if(!preset)throw new Error('Unknown block preset.');return normalizeBlock({...structuredClone(preset.block),id:id()});}
 export function duplicateBlock(block){return normalizeBlock({...structuredClone(block),id:id()});}
-export function createSection(key='custom',column='main'){const preset=presets.find(p=>p.key===key);if(!preset)throw new Error('Unknown section preset.');return {id:id(),title:key==='custom'?'Custom section':preset.label,column,blocks:[createBlock(key)]};}
+export function createSection(key='custom',column='main'){const preset=presets.find(p=>p.key===key);if(!preset)throw new Error('Unknown section preset.');return {id:id(),title:key==='custom'?'Custom section':preset.label,column,blockSpacing:18,blocks:[createBlock(key)]};}
 export function moveSection(resume,sectionId,column,beforeId=null){
   if(!['main','side'].includes(column))return false;
   const source=resume.sections.findIndex(s=>s.id===sectionId);
