@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <meta name="theme-color" content="#17594f">
+ <meta name="description" content="Use your resume backup with an AI assistant, then safely import the edited file into Folio Resume Studio.">
+ <title>AI resume helper — Folio Resume Studio</title>
+ <link rel="stylesheet" href="src/policy.css">
+ <link rel="stylesheet" href="src/buttons.css">
+ <link rel="stylesheet" href="src/ai-helper.css">
+</head>
+<body>
+ <header class="policy-header">
+  <div class="policy-header-inner">
+   <a class="policy-brand" href="./" aria-label="Folio home">f<span>●</span></a>
+   <nav class="policy-nav" aria-label="Site"><a href="./">Resume editor</a><a href="./ai-helper.html" aria-current="page">AI helper</a><a href="./privacy.html">Privacy</a></nav>
+  </div>
+ </header>
+ <main class="policy-main helper-main">
+  <div class="helper-intro">
+   <div class="eyebrow">FOLIO RESUME STUDIO · YOUR STORY, YOURS</div>
+   <h1>AI resume helper</h1>
+   <p class="policy-intro">Bring your own AI assistant into the writing process. Folio gives you a backup, a facts-only prompt, and the exact format to return your changes safely.</p>
+  </div>
+  <ol class="handoff" aria-label="AI resume editing steps">
+   <li class="handoff-step"><span class="step-number">01</span><div><h2>Back up your resume</h2><p>Open the editor and choose <strong>Backup</strong>. Keep the downloaded JSON file somewhere you can find it.</p><a class="button outline" href="./">Open editor <span aria-hidden="true">↗</span></a></div></li>
+   <li class="handoff-step"><span class="step-number">02</span><div><h2>Edit with AI</h2><p>Give your backup and the prompt below to an AI assistant you trust. Review its edits before bringing the file back.</p><label class="artifact-label" for="ai-prompt">FACTS-ONLY PROMPT</label><textarea id="ai-prompt" readonly rows="8" aria-describedby="prompt-help">Improve the writing in my attached Folio Resume Studio JSON backup using only facts already present in that backup. Do not invent employers, dates, skills, qualifications, numbers, contact details, or achievements. Preserve the structure and every existing section and block ID; keep all section IDs unique and all block IDs unique across the whole resume. Preserve each section blockSpacing; use 18 when an older backup omits it. Preserve all header links exactly, including empty, partial, or unsafe draft labels and URLs; do not invent links. Only absolute http:// or https:// URLs without credentials become clickable. Preserve design, photo, and block library data when present. Return one complete canonical version 2 JSON backup and no Markdown. Include schemaVersion set to 2, photo (an empty string if none), the complete design object, and blockLibrary (an empty array if none). The complete Folio version 2 JSON Schema follows this instruction. If an improvement needs a missing fact, leave it unchanged and ask me a question separately. I will review the result before importing it.</textarea><div class="artifact-actions"><button class="button primary" id="copy-prompt" type="button">Copy prompt</button><span class="copy-status" id="copy-status" role="status" aria-live="polite"></span></div><p class="artifact-help" id="prompt-help">The prompt asks for writing improvements while keeping your existing facts and backup data intact.</p></div></li>
+   <li class="handoff-step"><span class="step-number">03</span><div><h2>Return and import</h2><p>Save the assistant’s result as a <code>.json</code> file. In Folio, choose <strong>Import backup</strong> and select it. The editor’s own validation is authoritative; invalid files are rejected before they can change your resume. Undo is available for resume changes.</p><a class="button outline" href="./">Return to editor <span aria-hidden="true">↗</span></a></div></li>
+  </ol>
+  <section class="schema-panel" aria-labelledby="schema-title">
+   <div class="schema-heading"><div><div class="artifact-label">THE FILE FORMAT</div><h2 id="schema-title">Folio resume JSON Schema</h2><p>This schema describes the complete canonical version 2 backup the AI should return. On import, Folio’s editor validation is authoritative and may normalize omitted fields from older backups.</p></div><span class="schema-version">VERSION 2</span></div>
+   <details class="schema-details" open><summary>Inspect the complete schema</summary>
+    <pre><code id="resume-json-schema">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Folio Resume Backup, Version 2",
+  "type": "object",
+  "description": "This is the complete canonical version 2 backup output. On import, the editor may normalize omitted legacy fields and ignores unknown properties; editor validation is authoritative. Section IDs and block IDs must be unique; the editor checks block IDs across sections.",
+  "required": ["schemaVersion", "name", "role", "email", "phone", "location", "website", "links", "photo", "sections", "design", "blockLibrary"],
+  "properties": {
+    "schemaVersion": {"const": 2},
+    "name": {"$ref": "#/$defs/text"},
+    "role": {"$ref": "#/$defs/text"},
+    "email": {"$ref": "#/$defs/text"},
+    "phone": {"$ref": "#/$defs/text"},
+    "location": {"$ref": "#/$defs/text"},
+    "website": {"$ref": "#/$defs/text"},
+    "links": {"type": "array", "maxItems": 10, "description": "Additional header links. Preserve incomplete and unsafe drafts as text; the editor renders only complete labels and makes only absolute credential-free HTTP or HTTPS URLs clickable.", "items": {"$ref": "#/$defs/headerLink"}},
+    "photo": {"type": "string", "maxLength": 1500000, "pattern": "^$|^data:image/(?:[Jj][Pp][Ee][Gg]|[Pp][Nn][Gg]|[Ww][Ee][Bb][Pp]);base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"},
+    "sections": {"type": "array", "maxItems": 40, "description": "Section IDs are unique. x-uniqueBy documents the editor-enforced uniqueness check.", "x-uniqueBy": "id", "items": {"$ref": "#/$defs/section"}},
+    "design": {"$ref": "#/$defs/design"},
+    "blockLibrary": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/libraryEntry"}}
+  },
+  "$defs": {
+    "text": {"type": "string", "maxLength": 20000},
+    "headerLink": {"type": "object", "required": ["label", "url"], "additionalProperties": false, "description": "A header link draft. Both fields may be empty or partial; only a complete label and an absolute credential-free HTTP or HTTPS URL is clickable.", "properties": {"label": {"type": "string", "maxLength": 20000}, "url": {"type": "string", "maxLength": 20000, "description": "Only an absolute HTTP or HTTPS URL without embedded credentials (username or password) becomes clickable; other drafts are preserved as inert text."}}},
+    "section": {
+      "type": "object", 
+      "required": ["id", "title", "column", "blockSpacing", "blocks"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 20000},
+        "title": {"$ref": "#/$defs/text"},
+        "column": {"enum": ["main", "side"]},
+        "blockSpacing": {"type": "number", "minimum": 0, "maximum": 48, "description": "Per-section margin below each block except the final block; defaults to 18 for older backups."},
+        "blocks": {"type": "array", "maxItems": 100, "description": "Block IDs are unique within this section; the editor also checks uniqueness across the full resume.", "x-uniqueBy": "id", "items": {"$ref": "#/$defs/block"}}
+      }
+    },
+    "block": {
+      "type": "object", 
+      "required": ["id", "title", "subtitle", "date", "location", "paragraph", "bullets", "icon", "style"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 20000},
+        "title": {"$ref": "#/$defs/text"}, "subtitle": {"$ref": "#/$defs/text"},
+        "date": {"$ref": "#/$defs/text"}, "location": {"$ref": "#/$defs/text"},
+        "paragraph": {"$ref": "#/$defs/text"},
+        "bullets": {"type": "array", "maxItems": 200, "items": {"type": "string", "maxLength": 20000}},
+        "icon": {"enum": ["none", "briefcase", "code", "book", "star", "award", "heart", "globe"]},
+        "style": {"$ref": "#/$defs/blockStyle"}
+      }
+    },
+    "blockStyle": {
+      "type": "object", 
+      "required": ["font", "titleColor", "subtitleColor", "textColor", "background", "bulletStyle", "border"],
+      "properties": {
+        "font": {"enum": ["inherit", "sans", "arial", "verdana", "trebuchet", "serif", "times", "mono"]},
+        "titleColor": {"$ref": "#/$defs/colorOrEmpty"}, "subtitleColor": {"$ref": "#/$defs/colorOrEmpty"},
+        "textColor": {"$ref": "#/$defs/colorOrEmpty"}, "background": {"$ref": "#/$defs/colorOrEmpty"},
+        "bulletStyle": {"enum": ["inherit", "disc", "circle", "square", "dash", "arrow", "check", "decimal", "none"]},
+        "border": {"enum": ["none", "line", "card"]}
+      }
+    },
+    "colorOrEmpty": {"type": "string", "pattern": "^$|^#[0-9a-fA-F]{6}$"},
+    "design": {
+      "type": "object", 
+      "required": ["template", "accent", "font", "size", "margin", "spacing", "lineHeight", "columns", "ratio", "background", "icons", "paper", "subtitleColor", "textColor", "bulletStyle", "headingStyle", "photoShape", "photoPosition", "photoSize"],
+      "properties": {
+        "template": {"enum": ["editorial", "classic", "modern"]},
+        "accent": {"$ref": "#/$defs/color"}, "subtitleColor": {"$ref": "#/$defs/color"}, "textColor": {"$ref": "#/$defs/color"},
+        "font": {"enum": ["sans", "arial", "verdana", "trebuchet", "serif", "times", "mono"]},
+        "size": {"type": "number", "minimum": 8, "maximum": 13}, "margin": {"type": "number", "minimum": 20, "maximum": 64},
+        "spacing": {"type": "number", "minimum": 8, "maximum": 36}, "lineHeight": {"type": "number", "minimum": 1.2, "maximum": 1.9},
+        "columns": {"enum": [1, 2]}, "ratio": {"type": "number", "minimum": 50, "maximum": 75},
+        "background": {"enum": ["clean", "tinted", "sidebar"]}, "icons": {"enum": ["minimal", "none", "classic"]},
+        "paper": {"enum": ["a4", "letter"]}, "bulletStyle": {"enum": ["disc", "circle", "square", "dash", "arrow", "check", "decimal", "none"]},
+        "headingStyle": {"enum": ["plain", "line", "band"]}, "photoShape": {"enum": ["auto", "circle", "rounded", "square"]},
+        "photoPosition": {"enum": ["center", "top", "bottom"]}, "photoSize": {"type": "number", "minimum": 72, "maximum": 128}
+      }
+    },
+    "color": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"},
+    "libraryEntry": {
+      "type": "object",  "required": ["id", "name", "block"],
+      "properties": {"id": {"$ref": "#/$defs/text"}, "name": {"type": "string", "minLength": 1, "maxLength": 20000}, "block": {"$ref": "#/$defs/block"}}
+    }
+  }
+}</code></pre>
+   </details>
+  </section>
+  <p class="privacy-note"><span aria-hidden="true">♧</span> <span>Folio does not send resume data to an AI service. You choose what file and prompt to share with an assistant.</span></p>
+ </main>
+ <footer class="policy-footer"><a href="./privacy.html">Privacy policy</a>Folio Resume Studio</footer>
+ <script>
+  const button=document.querySelector('#copy-prompt');
+  const schema=document.querySelector('#resume-json-schema');
+  const prompt=document.querySelector('#ai-prompt');
+  const status=document.querySelector('#copy-status');
+  const copyText=()=>prompt.value.trim()+'\n\n--- FOLIO RESUME JSON SCHEMA ---\n'+schema.textContent.trim();
+  button.addEventListener('click',async()=>{
+   let copied=false;
+   try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(copyText());copied=true;}}catch{}
+   if(!copied){const fallback=document.createElement('textarea');fallback.value=copyText();fallback.setAttribute('readonly','');fallback.style.position='fixed';fallback.style.opacity='0';document.body.append(fallback);try{fallback.focus();fallback.select();copied=document.execCommand('copy');}catch{}finally{fallback.remove();button.focus();}}
+   status.textContent=copied?'Prompt and full schema copied. Paste them with your backup into your AI assistant.':'Copy is unavailable here. Select the prompt and schema text and copy them manually.';
+  });
+ </script>
+</body>
+</html>
