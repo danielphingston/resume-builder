@@ -1,0 +1,17 @@
+button,input,select,textarea{font:inherit}
+button{color:inherit;cursor:pointer}
+button,a,input,textarea,select{-webkit-tap-highlight-color:transparent}
+button:disabled{opacity:.35;cursor:default}
+button:focus-visible,a:focus-visible{outline:2px solid #528d7a;outline-offset:3px}
+button{transition:background .15s,border-color .15s,filter .15s,transform .15s}
+button:hover{filter:brightness(.97)}
+.button{border:1px solid transparent;padding:10px 16px;border-radius:6px;font-size:12px;font-weight:550;display:inline-flex;align-items:center;justify-content:center;gap:14px;min-height:37px;cursor:pointer;text-decoration:none}
+.button:hover{filter:brightness(.96)}
+.button:active{filter:brightness(.92);transform:translateY(1px)}
+.button:focus-visible{outline:2px solid #528d7a;outline-offset:3px}
+.button.primary{background:#205c52;color:#fff;box-shadow:0 2px 3px #123c1710}
+.button.secondary,.button.outline{background:#fff;border-color:#dce2da;color:#26352f}
+.button.secondary:hover,.button.outline:hover{background:#f1f6ef;border-color:#a8c5b0}
+.icon-button{width:30px;height:30px;font-size:20px;background:none;border:0;color:#7e8a81;border-radius:4px}
+.icon-button:hover{background:#f1f6ef}
+.icon-button:active{filter:brightness(.92);transform:translateY(1px)}

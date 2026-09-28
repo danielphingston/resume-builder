@@ -158,14 +158,14 @@ test('PDF view shows clean sheets and can return to editing',async({page})=>{
  await page.getByRole('button',{name:'PDF view'}).click();
  await expect(page.locator('#preview-mode')).toHaveText('PDF PREVIEW');
  await expect(page.getByRole('button',{name:'Edit view'})).toHaveAttribute('aria-pressed','true');
- await expect(block(page).locator('.block-toolbar')).toBeHidden();
+ await expect(block(page).locator('.block-canvas-actions')).toBeHidden();
  await expect(canvas(page).locator('.column-add').first()).toBeHidden();
  await expect(canvas(page).locator('.resume-block.selected')).toHaveCount(0);
  expect(await canvas(page).locator('.resume-page').count()).toBe(count);
  await page.getByRole('button',{name:'Edit view'}).click();
  await expect(page.locator('#preview-mode')).toHaveText('EDITABLE CANVAS');
  await selectBlock(page);
- await expect(block(page).locator('.block-toolbar')).toBeVisible();
+ await expect(block(page).locator('.block-canvas-actions')).toBeVisible();
 });
 
 test('multiple resumes save independently and switch across reloads',async({page})=>{
@@ -286,7 +286,7 @@ test('sections drag across columns and keyboard controls reorder blocks',async({
 
 test('empty sections accept blocks through the accessible move control',async({page})=>{
  await page.locator('#add-section').click();await page.locator('[data-insert-preset="custom"]').click();const id=(await state(page)).sections.at(-1).id;
- await page.locator('.inspector').getByRole('button',{name:'Delete',exact:true}).click();await expect(canvas(page).locator(`[data-section="${id}"] [data-block]`)).toHaveCount(0);
+ await page.locator('.inspector').getByRole('button',{name:'Delete block',exact:true}).click();await expect(canvas(page).locator(`[data-section="${id}"] [data-block]`)).toHaveCount(0);
  await selectBlock(page);await page.getByLabel('Move to section',{exact:true}).selectOption(id);await expect(canvas(page).locator(`[data-section="${id}"] [data-block]`)).toHaveCount(1);
 });
 
@@ -309,7 +309,7 @@ test('backup exports blocks and library, import rejects invalid data and restore
 });
 
 test('print hides editing controls, outlines and empty placeholders',async({page})=>{
- await selectBlock(page);await expect(block(page).locator('.block-toolbar')).toBeVisible();await page.emulateMedia({media:'print'});await expect(block(page).locator('.block-toolbar')).toBeHidden();await expect(canvas(page).locator('.column-add').first()).toBeHidden();await expect(block(page).locator('.block-paragraph')).toBeHidden();await expect(block(page)).toHaveCSS('outline-style','none');
+ await selectBlock(page);await expect(block(page).locator('.block-canvas-actions')).toBeVisible();await page.emulateMedia({media:'print'});await expect(block(page).locator('.block-canvas-actions')).toBeHidden();await expect(canvas(page).locator('.column-add').first()).toBeHidden();await expect(block(page).locator('.block-paragraph')).toBeHidden();await expect(block(page)).toHaveCSS('outline-style','none');
  const pdf=await page.pdf({preferCSSPageSize:true,printBackground:true});expect(pdf.byteLength).toBeGreaterThan(10000);
 });
 
